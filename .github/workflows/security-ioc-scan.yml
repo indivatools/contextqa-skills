@@ -50,9 +50,16 @@ jobs:
           )
 
           shopt -s nullglob
-          WF_FILES=(.github/workflows/*.yml .github/workflows/*.yaml)
+          ALL_WF=(.github/workflows/*.yml .github/workflows/*.yaml)
+          # Exclude the scanner itself (its pattern definitions would self-match)
+          WF_FILES=()
+          for f in "${ALL_WF[@]}"; do
+            base=$(basename "$f")
+            [ "$base" = "security-ioc-scan.yml" ] && continue
+            WF_FILES+=("$f")
+          done
           if [ ${#WF_FILES[@]} -eq 0 ]; then
-            echo "No workflow files to scan."
+            echo "No workflow files to scan (scanner self excluded)."
             exit 0
           fi
 
