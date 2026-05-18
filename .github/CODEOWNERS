@@ -1,0 +1,5 @@
+# Workflow and CI configuration changes require security-admin review.
+# Do not modify or remove without admin approval.
+
+.github/workflows/    @rohithzr @barotdeep
+.github/CODEOWNERS    @rohithzr @barotdeep
