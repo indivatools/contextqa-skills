@@ -1,17 +1,18 @@
 # Per-repo stub. Logic lives in indivatools/.github (central reusable).
-# To update scanner behavior, change the reusable in indivatools/.github — not here.
+# Runs on every PR + every push to protected branches so the required status check
+# always reports (otherwise PRs that don't touch .github/workflows/** would never
+# get a status and would be blocked indefinitely).
 
 name: Security IOC Scan
 
 on:
   pull_request:
-    paths:
-      - '.github/workflows/**'
   push:
-    paths:
-      - '.github/workflows/**'
+    branches:
+      - main
+      - qa
+      - release
 
 jobs:
   scan:
     uses: indivatools/.github/.github/workflows/security-ioc-scan-reusable.yml@main
-# retriggered post visibility flip
