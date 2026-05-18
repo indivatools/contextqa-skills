@@ -1,7 +1,7 @@
-name: Security IOC Scan
+# Per-repo stub. Logic lives in indivatools/.github (central reusable).
+# To update scanner behavior, change the reusable in indivatools/.github — not here.
 
-# Blocks known-malicious GitHub Actions workflow patterns.
-# If this fails on a legitimate change, contact @rohithzr or @barotdeep.
+name: Security IOC Scan
 
 on:
   pull_request:
@@ -13,93 +13,4 @@ on:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Scan workflow files for known-malicious indicators
-        run: |
-          set -u
-          FAILED=0
-
-          # Out-of-band callback / exfil domains commonly used in workflow injection attacks
-          DOMAIN_PATTERNS=(
-            'oast\.fun'
-            'oast\.live'
-            'oast\.site'
-            'oast\.online'
-            'oast\.me'
-            'oast\.pro'
-            'interact\.sh'
-            'interactsh'
-            'burpcollaborator\.net'
-            'requestbin\.'
-            'webhook\.site'
-            'ngrok\.io'
-            'ngrok-free\.app'
-          )
-
-          # Fingerprint strings from known malicious workflow templates
-          STRING_PATTERNS=(
-            'send-secrets'
-            'Github Actions Security'
-            'Prepare Cache Busting'
-            'CACHE_BUST=\$\(date \+%s\)'
-          )
-
-          shopt -s nullglob
-          ALL_WF=(.github/workflows/*.yml .github/workflows/*.yaml)
-          # Exclude the scanner itself (its pattern definitions would self-match)
-          WF_FILES=()
-          for f in "${ALL_WF[@]}"; do
-            base=$(basename "$f")
-            [ "$base" = "security-ioc-scan.yml" ] && continue
-            WF_FILES+=("$f")
-          done
-          if [ ${#WF_FILES[@]} -eq 0 ]; then
-            echo "No workflow files to scan (scanner self excluded)."
-            exit 0
-          fi
-
-          for pattern in "${DOMAIN_PATTERNS[@]}"; do
-            if grep -REn "$pattern" "${WF_FILES[@]}" 2>/dev/null; then
-              echo "::error::Out-of-band callback domain match: $pattern"
-              FAILED=1
-            fi
-          done
-
-          for pattern in "${STRING_PATTERNS[@]}"; do
-            if grep -REn "$pattern" "${WF_FILES[@]}" 2>/dev/null; then
-              echo "::error::Known-malicious string match: $pattern"
-              FAILED=1
-            fi
-          done
-
-          # Heuristic: curl/wget POSTing GitHub Actions secrets to any URL
-          if grep -REn 'curl[^\n]*-d[^\n]*secrets\.' "${WF_FILES[@]}" 2>/dev/null; then
-            echo "::error::curl POST with secrets.* reference (potential exfil)"
-            FAILED=1
-          fi
-          if grep -REn 'wget[^\n]*--post-data[^\n]*secrets\.' "${WF_FILES[@]}" 2>/dev/null; then
-            echo "::error::wget POST with secrets.* reference (potential exfil)"
-            FAILED=1
-          fi
-
-          # Heuristic: UUID-style workflow filenames (common blend-in pattern)
-          for f in "${WF_FILES[@]}"; do
-            base=$(basename "$f")
-            if [[ "$base" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.ya?ml$ ]]; then
-              echo "::error::UUID-named workflow file (suspicious): $f"
-              FAILED=1
-            fi
-          done
-
-          if [ "$FAILED" -ne 0 ]; then
-            echo "::error::Security IOC scan FAILED. See matches above."
-            echo "If legitimate, contact @rohithzr or @barotdeep for approval."
-            exit 1
-          fi
-
-          echo "OK: no IOCs matched."
+    uses: indivatools/.github/.github/workflows/security-ioc-scan-reusable.yml@main
