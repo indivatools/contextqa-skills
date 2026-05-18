@@ -1,0 +1,15 @@
+# Per-repo stub. Logic lives in indivatools/.github (central reusable).
+# Enforces main -> qa -> release promotion chain (hotfix/* allowed to qa/release).
+
+name: Branch Promotion Check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - qa
+      - release
+
+jobs:
+  verify:
+    uses: indivatools/.github/.github/workflows/branch-promotion-check-reusable.yml@main
