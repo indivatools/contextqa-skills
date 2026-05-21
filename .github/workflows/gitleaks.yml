@@ -1,0 +1,29 @@
+name: gitleaks
+
+# Calls the shared reusable gitleaks workflow in indivatools/.github.
+# Source of truth: indivatools/.github/.github/workflows/gitleaks-reusable.yml
+# Change scan behavior org-wide by editing the reusable workflow, not this stub.
+#
+# Triggers:
+#   push / pull_request: incremental diff scan on every push and PR
+#   workflow_dispatch:   manual full-repo scan from the Actions tab
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+  workflow_dispatch:
+
+# The reusable workflow's job needs pull-requests: write (PR comments) and
+# security-events: write (SARIF upload). Repos default GITHUB_TOKEN to read,
+# so these must be granted at the caller level: a called workflow can only
+# use permissions <= what the caller grants.
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  scan:
+    uses: indivatools/.github/.github/workflows/gitleaks-reusable.yml@main
+    secrets: inherit
