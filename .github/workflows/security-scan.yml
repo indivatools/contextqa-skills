@@ -1,0 +1,14 @@
+# Per-repo stub. Logic lives in indivatools/.github. Do not edit here.
+name: security-scan
+on:
+  pull_request:
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: indivatools/.github/.github/actions/security-scan@main
