@@ -1,0 +1,11 @@
+# Per-repo stub. Logic lives in indivatools/.github. Do not edit here.
+name: sequence-check
+on:
+  pull_request:
+jobs:
+  sequence-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: indivatools/.github/.github/actions/sequence-check@main
