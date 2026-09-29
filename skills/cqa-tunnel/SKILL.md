@@ -19,9 +19,14 @@ Two surfaces, and it matters which one you are on:
 |---|---|---|
 | `contextqa` CLI | **you, on the machine** | install, enrol, publish routes, diagnose |
 | `/api/tunnel/*` HTTP API | the portal's Tunnels page | mint tokens, list machines and routes, remove them |
+| ContextQA MCP tools | — | **not yet built** (see below) |
 
-**There are no MCP tools for the tunnel.** The CLI is your surface. Treat the
-HTTP API as read-mostly context and as the thing the portal page is doing.
+**The ContextQA MCP has no tunnel tools yet** — calling the tunnel API from the
+MCP is planned but not implemented, so nothing in the tool list mints a token,
+lists machines or publishes a route. Until it lands, **the CLI is your surface**;
+treat the HTTP API below as context for what the portal page is doing, and for
+the day the tools arrive. Check `list_contextqa_skills` and the tool list rather
+than assuming this paragraph is still current.
 
 ## Step 0 — Decide whether you need it
 

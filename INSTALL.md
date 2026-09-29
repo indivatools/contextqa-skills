@@ -7,7 +7,7 @@ Claude Desktop, and the rest. It is the whole install.
 
 > Install the ContextQA skills. If you're in Claude Code, run
 > `claude plugin marketplace add indivatools/contextqa-skills`, then
-> `claude plugin install contextqa@contextqa` — that installs all twelve skills
+> `claude plugin install contextqa@contextqa` — that installs all thirteen skills
 > and wires up the hosted ContextQA MCP server in one step. If you're in another
 > agent, run `npx skills add indivatools/contextqa-skills` and select your agent,
 > then point your MCP client at `https://mcp.contextqa.com/mcp` (setup per client:
@@ -34,7 +34,7 @@ claude plugin install contextqa@contextqa
 **Any other agent:**
 
 ```bash
-npx skills add indivatools/contextqa-skills          # all twelve
+npx skills add indivatools/contextqa-skills          # all thirteen
 npx skills add indivatools/contextqa-skills -g       # globally, all agents
 npx skills add indivatools/contextqa-skills -a codex # to one agent
 npx skills add indivatools/contextqa-skills --skill contextqa   # master only

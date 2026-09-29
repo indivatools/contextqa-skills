@@ -1,14 +1,17 @@
 ---
 name: cqa-integrations
-description: Use when connecting ContextQA to GitHub, GitLab, Slack, Linear or Jira, diagnosing a connection that says "connected" but does nothing, enrolling a repository for PR impact analysis, or configuring where run notifications land. Covers the OAuth handoff, the settings that actually gate the pipeline, and the fields the platform stores but does not enforce. Triggers on "connect github", "set up slack notifications", "why isn't the PR check running", "enrol this repo", "disconnect jira", "/cqa-integrations".
+description: Use when connecting ContextQA to GitHub, GitLab, Slack, Linear or Jira, diagnosing a connection that says "connected" but does nothing, or choosing where Slack notifications land. Covers the one-click handoff, how to tell a one-click row from a legacy token row, what `connection_status` means, and why disconnecting takes enrolled repositories with it. Triggers on "connect github", "set up slack notifications", "why isn't my integration working", "reconnect gitlab", "disconnect jira", "/cqa-integrations".
 ---
 
-# ContextQA Integrations, Notifications and PR Impact
+# ContextQA Integrations and Notifications
 
-Three things live here: **connections** (a provider is linked to the tenant),
-**enrolments** (a specific repository is watched), and **settings** (what the
-pipeline is allowed to do). A failure at any layer looks identical from the
-portal — "connected", and nothing happens — so always diagnose in order.
+This skill owns **connections** — linking a provider to the tenant, telling
+whether that link actually works, and taking it away — plus the Slack channel
+that notifications go to.
+
+It does **not** own the PR impact pipeline. Enrolling a repository, the
+analysis settings, triggering a run and reviewing the items all live in
+**`/cqa-impact`**.
 
 ## Step 0 — Read the current state
 
@@ -20,9 +23,36 @@ manage_pr_impact(action="list_repos")
 manage_notifications(action="get")
 ```
 
-**Prefer `registry` over `list` when something is wrong.** An integration row
-can outlive the provider-side install — someone uninstalls the GitHub App and
-`list` still says connected. Only the registry sees that.
+### Read `connection_status` first
+
+Every one-click row carries `metadata.connection_status`, and it is exactly
+three values. This is one call and it usually *is* the answer:
+
+| `connection_status` | What it means |
+|---|---|
+| `active` | working |
+| `needs_reauth` | the stored credential no longer reaches the provider — the user must reconnect |
+| `revoked` | the grant is gone provider-side (app uninstalled, token revoked) |
+
+`registry` is the cross-check: it returns the global mapping with its own
+`status` (e.g. `REVOKED`) and the `externalConnectionId`, which is what proves a
+row is wired to *this* org rather than merely present. A connection that reads
+`active` in `list` but has no registry row is wired to nothing.
+
+### Telling a one-click row from a legacy one
+
+`list` returns every integration the tenant has, of both kinds, and they are
+easy to confuse:
+
+- **One-click (OAuth / App):** named `GitHub App`, `GitLab App`, `Slack App`,
+  `Linear App`; `username` is `oauth-app`; `token` is null; the real state is in
+  `metadata` (`connection_status`, `installation_id`, `account_login`, `teamId`).
+- **Legacy token rows:** a real `username` and a stored, masked `password` /
+  `token`; `metadata` is usually `null`. Azure DevOps, Jira Data Center, the
+  vault entries and the older trackers all look like this.
+
+Only the first kind has a connect link, a registry row, or a
+`connection_status`.
 
 ## Step 1 — Connect a provider
 
@@ -40,12 +70,30 @@ have selected.
 and the handshake is consumed exactly once. Building the link and handing it
 over is the whole of what an agent can do here.
 
-- `github`, `gitlab`, `slack`, `linear` and **Jira Cloud** all connect by
-  one-click OAuth (Jira Cloud is Atlassian 3LO).
-- **Jira Data Center** uses a site URL + username + API token form, as do the
-  other token-based trackers (Azure DevOps, ClickUp, YouTrack, Bugzilla, Mantis,
-  Zepel, Backlog, Freshrelease, Trello, MS Teams, Google Chat). `list` returns
-  them even though they never appear in a connect link.
+On **Ship** (`ship.contextqa.com`, the self-serve product) these are part of
+onboarding, and the source-control connection is limited to **exactly one
+repository, read-only**. Plan accordingly — there is no second repo to enrol.
+
+- `github`, `gitlab`, `slack`, `linear` and **Jira Cloud** are the five
+  one-click providers — those are exactly the ids `connect_url` accepts, and
+  exactly the five registered in the connection service.
+- **GitHub is a GitHub *App install*, not an OAuth authorize.** The consent
+  screen is an app installation, and API calls use short-lived installation
+  tokens rather than a stored one — which is why an uninstall on GitHub's side
+  shows up as `revoked` rather than as an expired token. GitLab and Slack are
+  OAuth 2 (GitLab with PKCE), Linear is plain authorization-code, and Jira Cloud
+  is Atlassian 3LO.
+- **Jira Data Center keeps the site URL + username + API token form,
+  permanently** — it has no 3LO, and that is a decision on record, not a gap.
+  The same form covers the other token-based trackers (Azure DevOps, ClickUp,
+  YouTrack, Bugzilla, Mantis, Zepel, Backlog, Freshrelease, Trello, MS Teams,
+  Google Chat). `list` returns all of them even though they never appear in a
+  connect link.
+- **Expect to find existing Jira rows in the legacy form.** Jira Cloud only
+  became one-click recently, so a tenant connected before then still carries a
+  Basic-auth row with a real username and a stored token. Read the row before
+  assuming which kind you are looking at, and reconnect through `connect_url` if
+  you want it on 3LO.
 
 **A connection binds to one workspace version at connect time.** `connect_url`
 always sends the current workspace, because omitting it makes the service bind
@@ -79,119 +127,25 @@ manage_notifications(action="set", channel_id="C0BS12345", channel_name="qa-aler
   fall back to an org default.
 - The **run report by email** is a separate, simpler mechanism: `notify_emails`
   on a test plan. See `cqa-suites-and-plans`.
+## When a connection is live but nothing happens
 
-## Step 3 — Enrol a repository for PR impact
+Three layers can each break while the one above looks fine. Diagnose in this
+order — most specific first:
 
-```
-manage_pr_impact(action="register_repo", integration_id=N,
-                 name="acme-web", repo_full_name="acme/acme-web",
-                 default_branch="develop")
-```
+1. **The enrolled repository row** — `manage_pr_impact(action="list_repos")`,
+   read `syncStatus`. `ACCESS_REMOVED` (with `isActive: false`) is the usual
+   cause and the only signal that distinguishes "we lost access to *this*
+   repository" from "the whole installation is revoked". `PENDING_SETUP` →
+   `TESTS_SYNCED` → `FEATURES_CONFIGURED` are stages on the way to `READY`;
+   `FAILED` means setup did not finish.
+2. **The registry** — `manage_integrations(action="registry", provider=...)`.
+3. **The connection row** — `metadata.connection_status`, above.
 
-Registration always binds the current workspace — a repo with no workspace
-blocks every analysis.
-
-**Read `syncStatus` on each row.** It is the single most useful field and the
-answer to "the settings page says connected but nothing happens":
-
-| `syncStatus` | Meaning |
-|---|---|
-| `PENDING_SETUP` → `TESTS_SYNCED` → `FEATURES_CONFIGURED` | stages on the way to ready |
-| `READY` | working |
-| `FAILED` | setup did not finish |
-| `ACCESS_REMOVED` (with `isActive: false`) | the provider grant is gone — the usual cause |
-
-Diagnose in this order: the repo's `syncStatus`, then
-`manage_integrations(action="registry")`, then the connection itself. The repo
-row is the most specific of the three, and the only one that distinguishes "we
-lost access to this repository" from "the whole installation is revoked".
-
-## Step 4 — Settings, and the one that silently drops everything
-
-```
-manage_pr_impact(action="get_settings")
-manage_pr_impact(action="update_settings", changes={"baseBranchFilter": "develop"})
-```
-
-Settings are an **org-wide singleton**, not per workspace — a change reaches
-every workspace. `update_settings` takes only the keys you want changed and
-merges them, because the underlying PUT is a full replace that would otherwise
-blank the rest of the org's configuration.
-
-**`baseBranchFilter` defaults to the literal string `main`.** In an organisation
-that merges into `develop` or `qa`, that default silently drops every pull
-request and nothing anywhere reports it. Set it to the repo's real default
-branch — this is the first thing to check when a correctly-connected repo
-analyses nothing.
-
-`testRunTiming` decides whether anything actually runs:
-
-| Value | Behaviour |
-|---|---|
-| `OFF` (default) | analyse and report, run nothing |
-| `POST_MERGE` | run after merge, once `deploymentWaitMinutes` (0–720) elapses or a deployment webhook arrives early |
-| `PRE_MERGE` | run against the PR's own build, matched on the head commit |
-
-**Stored but not enforced by the platform:** `preventSelfApproval`,
-`requiredApproversQuorum`, `archiveApproversQuorum`, `autoDemoteOnRejections`,
-`pathScope`, `suppressPaths`, `maxFilesPerAnalysis`. They come back in the
-object and read like working controls. Never describe them to a user as active —
-`pathScope` in particular looks like a working filter and matches nothing.
-
-One more surprise: setting `autonomyTier` to `AUTONOMOUS` **also forces
-`autoPromoteOnMerge` true server-side**, so the object can come back changed in
-a field you did not send. Re-read after writing.
-
-## Step 5 — Run and review an analysis
-
-```
-manage_pr_impact(action="trigger", repo_id=R, pr_number=142)   # 202: dispatched, not done
-manage_pr_impact(action="find_by_pr", repo_id=R, pr_number=142)
-manage_pr_impact(action="get_analysis", analysis_id=A)
-manage_pr_impact(action="list_items", analysis_id=A, item_class="UPDATE")
-manage_pr_impact(action="set_item_status", analysis_id=A, item_id=I, status="APPROVED")
-manage_pr_impact(action="run", analysis_id=A, environment_id=E)
-```
-
-- **A PR is identified by `(repo_id, pr_number)`.** The head sha plays no part:
-  there is one analysis row per PR forever, and each new commit overwrites it in
-  place.
-- The PR number is the **entire** request body for `trigger` — title, author,
-  base branch and SHAs are read server-side from the integration, so a PR cannot
-  be analysed against metadata that is not its own.
-- **Poll on `lifecycle`, never on `status`.**
-- `RERUN` items imply **no test-case change** — branch on `analysisClass` before
-  acting. `AUTO_APPROVED` is server-set and always rejected.
-- `set_item_status` fails once the analysis is finalized.
-
-### Four shapes that read as success and are not
-
-1. **`preflight: null` means "not checked", not "clean."** A real report with
-   `casesWithFindings == 0` is the earned all-clear.
-2. **A `COMPLETED` run with 0 passed and 0 failed executed nothing.**
-3. **`FAILED_TO_START` is infrastructure, not a red build.**
-4. **`decisionCarry: null` means nothing carried**, not that everything survived.
-
-And a naming trap: the run block is on the wire as `postMergeRun` **even for a
-pre-merge run** — the class was renamed and the JSON key deliberately was not.
-Read its `timing` field.
-
-The preflight itself is a static advisory scan asking "would a run against this
-environment actually exercise the PR's build?". Its findings are ordered by how
-badly they mislead: **`FIXED_URL` — a literal address in a step — is worse than
-`MISSING_ENV_KEY`**, because the case *passes*, having tested the old
-deployment. That is the argument for `cqa-environments` in one finding.
-
-## `analyze_impact` is a different tool
-
-`analyze_impact(title, description, diff, source)` is an **ad-hoc semantic
-query**: give it a change and it reasons over the case repository for 1–2
-minutes, returning `MUST_UPDATE` / `MUST_RERUN` / `SHOULD_RERUN` per case. It
-runs nothing, stores nothing, and needs no repository enrolled. It returns
-individual **test cases** only — never suites or plans.
-
-Use `analyze_impact` for "what would this change break?" and `manage_pr_impact`
-for the actual pipeline. `/cqa-impact` is the workflow that wraps both.
+Everything past the repository row — enrolment, settings, triggering and
+reviewing an analysis — belongs to the impact pipeline. **See `/cqa-impact`**,
+which owns it end to end, including the `baseBranchFilter` default that
+silently drops every pull request in an organisation that does not merge into
+`main`.
 
 ## Always go through the portal
 

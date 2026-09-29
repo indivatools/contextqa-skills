@@ -1,8 +1,14 @@
 # ContextQA Agent Skills
 
-Twelve agent skills that drive the [ContextQA](https://contextqa.com) MCP from
+Thirteen agent skills that drive the [ContextQA](https://contextqa.com) MCP from
 any compatible coding agent — Claude Code, Codex CLI, Cursor, Antigravity,
 Claude Desktop, and the rest.
+
+They work against the classic tenant portal and against
+**[Ship](https://ship.contextqa.com)**, ContextQA's self-serve product — the
+skills know what Ship includes (crawl-generated tests, one enrolled repo, PR
+impact, bug reproduction, metered credits) and what it does not (mobile testing,
+multi-repo), so they don't plan work a Ship org cannot do.
 
 ## Install
 
@@ -48,15 +54,16 @@ Run `/cqa-init` once to confirm everything is wired.
 | Skill | Use when |
 |---|---|
 | **`cqa-regression`** | Run a plan, poll it out loud, cluster the failures, dispatch read-only triage, hand confirmed bugs onward. |
+| **`cqa-bug-repro`** | Turn a bug ticket into a running reproduction — on demand, or automatically from a Linear/Jira label, a comment command, a reaction or `/reproduce` in Slack. |
 | **`cqa-debug`** | One failing case or bug ticket: gather telemetry in parallel, separate a product bug from a broken test, fix, verify, report. Capped at 3 attempts. |
-| **`cqa-impact`** | A ticket, PR or branch: which existing cases are affected, which coverage is missing. Layers the model's own case-step matcher and caller graph on top of `analyze_impact`. |
+| **`cqa-impact`** | A ticket, PR or branch: which existing cases are affected, which coverage is missing. Layers the model's own case-step matcher and caller graph on top of `analyze_impact`, and owns the enrolled-repo PR pipeline end to end. |
 | **`cqa-bug-hunter`** | Find as many bugs as possible in a deployed UI — recon, adversarial hypothesis matrix, generate at scale, execute, triage by severity. Built for breadth. |
 
 **Connecting things.**
 
 | Skill | Use when |
 |---|---|
-| **`cqa-integrations`** | Connect GitHub, GitLab, Slack, Linear or Jira; enrol a repo for PR impact; work out why a connection says "connected" and does nothing. |
+| **`cqa-integrations`** | Connect GitHub, GitLab, Slack, Linear or Jira; work out why a connection says "connected" and does nothing; choose the Slack channel for notifications. |
 | **`cqa-tunnel`** | The app under test only runs locally. Publish `localhost` as an HTTPS URL the runners can reach, wire it into an environment, and optionally host a browser inside the network. |
 
 ## How to invoke
@@ -70,6 +77,7 @@ Each skill auto-triggers on prompts matching its description, or name it:
 > /cqa-locators write the login steps, the locators are in case 1204
 > /cqa-suites-and-plans build a smoke plan on chrome and edge
 > /cqa-regression run the nightly plan
+> /cqa-bug-repro reproduce CON-1234
 > /cqa-debug result_id 1406
 > /cqa-impact PR #142
 > /cqa-bug-hunter https://staging.myapp.com

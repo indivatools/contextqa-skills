@@ -164,7 +164,10 @@ Hand a failing run to `/cqa-debug`, or a whole failing plan to
 - **A workspace version with no default test plan cannot execute anything**;
   `execute_test_case` answers 400 with an empty body. Prove one throwaway run
   works before authoring fifteen cases into that workspace.
-- **`MOBILE` on a plan without the mobile entitlement is rejected.**
+- **`MOBILE` on a plan without the mobile entitlement is rejected.** On **Ship**
+  (`ship.contextqa.com`, the self-serve product) mobile testing is not included
+  at launch at all — it is a Pro upgrade, so do not design a mobile plan for a
+  Ship org.
 
 ## A shape that works
 

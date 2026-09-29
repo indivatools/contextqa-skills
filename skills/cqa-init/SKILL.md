@@ -85,8 +85,14 @@ list_environments()
 list_knowledge_bases
 ```
 
-Note two things while you are here, because both change what other skills should
-do:
+Note three things while you are here, because they all change what other skills
+should do:
+
+- **Is this a Ship org?** Ship (`ship.contextqa.com`) is the self-serve product:
+  its onboarding runs a mandatory website crawl, so a fresh Ship org **already
+  has generated test cases** before anyone authors one. Read them before
+  creating anything. Ship also enrols exactly one repository and excludes mobile
+  testing at launch.
 
 - **Does a default test plan exist?** A workspace version without one cannot
   execute anything — `execute_test_case` answers `400` with an empty body. Say

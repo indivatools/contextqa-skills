@@ -8,8 +8,9 @@ description: >
   pull requests and tickets. Use when the task involves end-to-end or API
   testing, QA coverage for a change, reproducing or verifying a bug, running a
   regression, or exposing a locally running app or browser to the test runners.
-  This is the entry-point skill: it explains how the platform fits together and
-  routes to the specialist skill for the job.
+  Covers both the classic tenant portal and Ship (ship.contextqa.com), the
+  self-serve product. This is the entry-point skill: it explains how the
+  platform fits together and routes to the specialist skill for the job.
 ---
 
 # Build and run tests with ContextQA
@@ -47,6 +48,37 @@ get_contextqa_skill(name="contextqa-platform")
 If the catalogue is unreachable, say so, work from the sections below, and avoid
 inventing tenant-specific values — especially `naturalTextActionId` numbers,
 which differ per tenant.
+
+## Ship — the self-serve product
+
+**Ship (`ship.contextqa.com`) is ContextQA's self-serve product**, and it is the
+name customers meet first. It is the same platform, the same objects and the
+same MCP — a different way in, with the setup done for you.
+
+Signing up runs a guided onboarding: work-email sign-up and OTP → create the org
+→ app URL and test credentials → a **website crawl that generates tests** and
+cannot be skipped → connect **exactly one** code repository (GitHub or GitLab,
+read-only) → connect an issue tracker and Slack → invite the team → a 15-day Pro
+trial. The product surface is crawl-based test generation, code analysis, PR
+impact analysis, bug reproduction from tickets, root-cause analysis and
+auto-fix, the MCP, and credit-metered billing and usage.
+
+Four things change what you should do in a Ship org:
+
+- **The crawl has already generated test cases.** Read what exists
+  (`get_test_cases`, `query_contextqa`) before authoring — otherwise you write
+  duplicates on day one.
+- **Exactly one repository is enrolled**, read-only. Do not plan work that
+  assumes a second repo.
+- **Mobile testing is not in Ship at launch.** `MOBILE` plans and device runs
+  are a Pro upgrade; offering them is a dead end.
+- **Credits are metered and visible.** Crawls, AI generation, PR-impact runs and
+  reproductions all spend them, so say what something will cost before you start
+  it at scale.
+
+Everything else in this skill applies unchanged. Where a customer says "Ship",
+they mean this product; where they say "the portal", they usually mean the
+classic tenant at `<tenant>.contextqa.com`.
 
 ## Orient before you act
 
@@ -185,6 +217,7 @@ this through one describer, so a tool error is already a sentence.
 | Author precise typed steps against known locators | `cqa-locators` |
 | Group cases and build a runnable plan | `cqa-suites-and-plans` |
 | Run a plan and triage the failures | `cqa-regression` |
+| Turn a bug ticket into a running reproduction | `cqa-bug-repro` |
 | Diagnose and fix one failing case or bug | `cqa-debug` |
 | Work out what a PR or ticket breaks | `cqa-impact` |
 | Hunt for bugs in a deployed UI at breadth | `cqa-bug-hunter` |

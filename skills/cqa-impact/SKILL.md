@@ -133,10 +133,91 @@ Surface any subagent failure. Never retry silently.
 Per case: the portal `url` from `get_test_case` (never a hand-built link), the
 rerun verdict, and one paragraph the user can paste back onto the ticket or PR.
 
-If the repository is enrolled and the user wants this on the PR itself, hand off
-to `manage_pr_impact` — and check `baseBranchFilter` first, because it defaults
-to the literal `"main"` and silently drops every PR in an organisation that
-merges into `develop`.
+If the repository is enrolled and the user wants this verdict on the PR itself,
+continue into the pipeline below.
+
+## The PR pipeline — when a repository is enrolled
+
+Everything above is ad-hoc. This is the standing pipeline that puts a verdict on
+the PR itself: **enrol a repo → a PR triggers an analysis → review the per-case
+items → run the impacted cases → a comment and a check are posted back.**
+
+```
+manage_pr_impact(action="register_repo", integration_id=N,
+                 name="acme-web", repo_full_name="acme/acme-web",
+                 default_branch="develop")
+manage_pr_impact(action="list_repos")          # read syncStatus on every row
+manage_pr_impact(action="get_settings")
+manage_pr_impact(action="trigger", repo_id=R, pr_number="142")   # 202: dispatched
+manage_pr_impact(action="find_by_pr", repo_id=R, pr_number="142")
+manage_pr_impact(action="get_analysis", analysis_id=A)
+manage_pr_impact(action="list_items", analysis_id=A, item_class="UPDATE")
+manage_pr_impact(action="set_item_status", analysis_id=A, item_id=I, status="APPROVED")
+manage_pr_impact(action="run", analysis_id=A, environment_id=E)
+```
+
+Connect the provider first — that is `/cqa-integrations`. Registration always
+binds the current workspace, because a repo with no workspace blocks every
+analysis.
+
+### The setting that silently drops every PR
+
+**`baseBranchFilter` defaults to the literal string `main`.** In an organisation
+that merges into `develop` or `qa` it drops every pull request, and nothing
+anywhere reports it. This is the first thing to check when a correctly-connected
+repo analyses nothing.
+
+`testRunTiming` decides whether anything runs at all:
+
+| Value | Behaviour |
+|---|---|
+| `OFF` (default) | analyse and report, run nothing |
+| `POST_MERGE` | run after merge, once `deploymentWaitMinutes` (0–720) elapses or a deployment webhook arrives early |
+| `PRE_MERGE` | run against the PR's own build, matched on the head commit |
+
+Settings are an **org-wide singleton**, not per workspace. `update_settings`
+takes only the keys to change and merges them, because the underlying PUT is a
+full replace that would otherwise blank the rest of the org's configuration.
+
+**Stored but not enforced by the platform:** `preventSelfApproval`,
+`requiredApproversQuorum`, `archiveApproversQuorum`, `autoDemoteOnRejections`,
+`pathScope`, `suppressPaths`, `maxFilesPerAnalysis`. They come back in the
+object and read like working controls. Never describe them to a user as active —
+`pathScope` in particular looks like a working filter and matches nothing. And
+setting `autonomyTier` to `AUTONOMOUS` **also forces `autoPromoteOnMerge` true
+server-side**, so the object can come back changed in a field you did not send.
+
+### Running and reviewing
+
+- **A PR is identified by `(repo_id, pr_number)`.** The head sha plays no part:
+  there is one analysis row per PR forever, and each new commit overwrites it in
+  place. `analysis_id` is that row's `uploadRequirementId`; find it with
+  `find_by_pr`.
+- The PR number is the **entire** request body for `trigger` — title, author,
+  base branch and SHAs are read server-side from the integration, so a PR cannot
+  be analysed against metadata that is not its own.
+- **Poll on `lifecycle`, never on `status`.**
+- `RERUN` items imply **no test-case change** — branch on `analysisClass` before
+  acting. `AUTO_APPROVED` is server-set and always rejected.
+- `set_item_status` fails once the analysis is finalized.
+
+### Four shapes that read as success and are not
+
+1. **`preflight: null` means "not checked", not "clean."** A real report with
+   `casesWithFindings == 0` is the earned all-clear.
+2. **A `COMPLETED` run with 0 passed and 0 failed executed nothing.**
+3. **`FAILED_TO_START` is infrastructure, not a red build.**
+4. **`decisionCarry: null` means nothing carried**, not that everything survived.
+
+And a naming trap: the run block is on the wire as `postMergeRun` **even for a
+pre-merge run** — the class was renamed and the JSON key deliberately was not.
+Read its `timing` field.
+
+The preflight itself is a static advisory scan asking "would a run against this
+environment actually exercise the PR's build?". Its findings are ordered by how
+badly they mislead: **`FIXED_URL` — a literal address in a step — is worse than
+`MISSING_ENV_KEY`**, because the case *passes*, having tested the old
+deployment. That is the argument for `/cqa-environments` in one finding.
 
 ## Rules
 

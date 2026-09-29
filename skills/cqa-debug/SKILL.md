@@ -27,16 +27,16 @@ real failure, not deployment lag.
 
 ## Step 1 — Reproduce (only when the input is a ticket)
 
-1. Fetch the ticket body — matching MCP → `gh issue view` / `glab issue view` →
-   `curl`. If nothing works, ask once and accept a paste. **Never pass a raw
-   URL forward.**
-2. `bug_fix_from_ticket(ticket_text=<body>, url=<app_url>, repo_url=..., deployment_info=...)`
-   returns `test_case_id`, `session_rules[]`, `fix_guide[]` and a note. The run
-   is queued; `execution_url` stays null until you poll.
-3. **Treat the returned `session_rules` as authoritative** — where they conflict
-   with this skill, they win.
-4. Follow `fix_guide` — it is the canonical loop for that session.
-5. Continue at Step 2.
+**`/cqa-bug-repro` owns this.** It covers fetching the body, `bug_fix_from_ticket`,
+the automatic Linear / Jira / Slack triggers, and the production-write approval
+gate. Run it, then come back here with the `result_id`.
+
+Two things carry over into this skill:
+
+- **Treat any returned `session_rules` as authoritative** — where they conflict
+  with this skill, they win.
+- **Follow the returned `fix_guide`** — it is the canonical loop for that
+  session.
 
 ## Step 2 — Gather evidence (parallel, one message)
 

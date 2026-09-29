@@ -11,7 +11,7 @@
       "name": "contextqa",
       "source": "./",
       "category": "testing",
-      "description": "Author, run and debug ContextQA test cases from your agent. Bundles twelve skills and wires up the hosted ContextQA MCP server.",
+      "description": "Author, run and debug ContextQA test cases from your agent. Bundles thirteen skills and wires up the hosted ContextQA MCP server.",
       "homepage": "https://github.com/indivatools/contextqa-skills"
     }
   ]

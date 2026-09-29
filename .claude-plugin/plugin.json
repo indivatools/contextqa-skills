@@ -1,7 +1,7 @@
 {
   "name": "contextqa",
   "version": "2.0.0",
-  "description": "Author, run and debug ContextQA test cases from your agent. Twelve skills plus the hosted ContextQA MCP server.",
+  "description": "Author, run and debug ContextQA test cases from your agent. Thirteen skills plus the hosted ContextQA MCP server.",
   "author": {
     "name": "ContextQA",
     "url": "https://contextqa.com"
