@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "contextqa",
+  "description": "ContextQA agent skills and the hosted ContextQA MCP server, in one install.",
+  "owner": {
+    "name": "ContextQA",
+    "url": "https://contextqa.com"
+  },
+  "plugins": [
+    {
+      "name": "contextqa",
+      "source": "./",
+      "category": "testing",
+      "description": "Author, run and debug ContextQA test cases from your agent. Bundles thirteen skills and wires up the hosted ContextQA MCP server.",
+      "homepage": "https://github.com/indivatools/contextqa-skills"
+    }
+  ]
+}

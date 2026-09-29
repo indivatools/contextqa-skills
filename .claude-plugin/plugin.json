@@ -1,0 +1,15 @@
+{
+  "name": "contextqa",
+  "version": "2.0.0",
+  "description": "Author, run and debug ContextQA test cases from your agent. Thirteen skills plus the hosted ContextQA MCP server.",
+  "author": {
+    "name": "ContextQA",
+    "url": "https://contextqa.com"
+  },
+  "homepage": "https://contextqa.com",
+  "repository": "https://github.com/indivatools/contextqa-skills",
+  "license": "MIT",
+  "keywords": ["testing", "qa", "automation", "e2e", "playwright", "contextqa", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

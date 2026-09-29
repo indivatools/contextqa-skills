@@ -1,75 +1,140 @@
 ---
 name: cqa-debug
-description: Use when there is a failing ContextQA test case or execution to diagnose and fix. Inputs can be a `result_id`, a `test_case_id` whose latest run failed, a plan `execution_id` with failures, or a bug ticket that needs to be reproduced first. Investigate telemetry in parallel → root-cause hypothesis → subagent fix → verify → report. Triggers on phrases like "debug this failure", "fix this failing test", "why did test result <id> fail", "reproduce and fix this bug", "/cqa-debug <ref>".
+description: Use when a ContextQA test case or execution has failed and needs diagnosing and fixing. Inputs can be a `result_id`, a `test_case_id` whose latest run failed, a plan `execution_id` with failures, or a bug ticket that needs reproducing first. Gathers telemetry in parallel, separates a product bug from a broken test, fixes, verifies, reports. Capped at 3 attempts. Triggers on "debug this failure", "fix this failing test", "why did result <id> fail", "reproduce and fix this bug", "/cqa-debug <ref>".
 ---
 
 # ContextQA Debug & Fix
 
-Cap fix attempts at 3. Never loop indefinitely.
+The first question is always **"is this a product bug or a broken test?"**
+Answering it wrong wastes the whole session — you either patch working code or
+file a ticket against a stale selector.
+
+Cap fix attempts at 3. Never loop.
 
 ## Step 0 — Resolve the failure
 
-Capture or ask once:
-- `result_id` → go to Step 2
-- `test_case_id` → `get_test_case_results(test_case_id=...)` to find latest `result_id`
-- plan `execution_id` → `get_test_plan_execution_status(...)`, pick failed `result_id`s; if many, hand off to `/cqa-regression`
-- `ticket` (no test yet) → Step 1
+| You have | Do |
+|---|---|
+| `result_id` | → Step 2 |
+| `test_case_id` | `get_test_case(id)` → `last_run`, or `get_test_case_results(...)` for the latest `result_id` |
+| plan `execution_id` | `get_test_plan_execution_status(execution_id)`; pick the failed `result_id`s. Many failures → hand off to `/cqa-regression` |
+| a ticket, no test yet | → Step 1 |
 
-Also capture `app_url` and `deployment_info`. **Default: local file saves are immediately live at `app_url` — no build step.** Override only if the user says so.
+Also capture `app_url` and how the fix reaches it. **Default assumption: a local
+file save is immediately live at `app_url`, no build step.** Override only if
+the user says otherwise — and if they do, a `FAILURE` after a fix is still a
+real failure, not deployment lag.
 
-## Step 1 — Reproduce (only if input is a ticket)
+## Step 1 — Reproduce (only when the input is a ticket)
 
-1. Fetch ticket body. Order of preference: Linear MCP / Jira MCP / GitLab MCP → `gh issue view <n>` / `glab issue view <n>` → `curl` against the tracker REST API. If none available, ask once: *"I couldn't fetch <ref>. Install the matching MCP (e.g. `mcp install linear`) for best fidelity, OR paste the ticket body and I'll continue."* Plain-text bodies are fully supported — `bug_fix_from_ticket` accepts them natively. Never pass a raw URL forward.
-2. `bug_fix_from_ticket(ticket_text=<body>, url=<app_url>, deployment_info=...)` returns a bundle with `test_case_id`, `task_description`, `session_rules[]`, `fix_guide[]`, and `note`. The execution is queued; `execution_url` will be `null` until you poll.
-3. **Treat the returned `session_rules` as authoritative** — when they're present they override the default rules in this skill (e.g. deployment assumption, FAILED ≠ deployment lag, every change must be followed by `verify_bug_fix`).
-4. Follow the steps in `fix_guide` — they are the canonical loop for that session.
-5. Continue from Step 2.
+**`/cqa-bug-repro` owns this.** It covers fetching the body, `bug_fix_from_ticket`,
+the automatic Linear / Jira / Slack triggers, and the production-write approval
+gate. Run it, then come back here with the `result_id`.
 
-## Step 2 — Investigate (parallel subagents, ONE Agent message)
+Two things carry over into this skill:
 
-- **Agent A** — `investigate_failure(result_id)`. Return: failing element, error, immediate failing step, auto-suggested cause.
-- **Agent B** — `get_execution_step_details(result_id)` + `get_step_children_details` for any loop/conditional. Return: ordered breadcrumb of last 3–5 steps with inputs/outputs.
-- **Agent C** — `get_network_logs`, `get_console_logs`, `get_trace_url` (all on the same `result_id`). Return: 3 most relevant network entries, console errors, trace URL.
-- **Agent D** — Codebase grep for the failing element/endpoint/error from A. Return: 3 most likely source files with line numbers. Skip if the failure is purely UI with no clear identifier.
+- **Treat any returned `session_rules` as authoritative** — where they conflict
+  with this skill, they win.
+- **Follow the returned `fix_guide`** — it is the canonical loop for that
+  session.
 
-## Step 3 — Root-cause hypothesis (inline)
+## Step 2 — Gather evidence (parallel, one message)
+
+- **A — `investigate_failure(result_id)`.** Failing element, error, immediate
+  failing step, suggested cause.
+- **B — `get_execution_step_details(result_id)`** plus
+  `get_step_children_details(step_result_id, depth)` for any loop, step group or
+  IF/ELSE. Return an ordered breadcrumb of the last 3–5 steps with inputs and
+  outputs, and the verbatim `failure_reason`.
+- **C — `get_network_logs`, `get_console_logs`, `get_trace_url`** on the same
+  `result_id`. Return the 3 most relevant network entries, console errors, and
+  the trace link.
+- **D — codebase search** for the failing element, endpoint or error string from
+  A. Return the 3 most likely source files with line numbers. Skip if the
+  failure is purely UI with no identifier to search on.
+
+**If the case is data-driven, B returns `steps: []`.** That is expected — read
+the verdict from `get_test_case(id).last_run` (`total_steps` / `passed_steps` /
+`result`) instead.
+
+## Step 3 — Classify before you hypothesise
+
+Decide which of these it is, and say which:
+
+| Class | Tell |
+|---|---|
+| **Product bug** | the app returned the wrong thing; network/console show a real error; the step targeted the right element |
+| **Broken test** | selector no longer matches, a step lost its locators, an assertion encodes old copy |
+| **Environment** | `*\|var\|` missing from the bound environment, wrong base URL, expired credential, the app under test is not running |
+| **Infrastructure** | `FAILED_TO_START`, a run that `COMPLETED` with 0 passed and 0 failed, no default test plan in the workspace |
+
+Two failures that masquerade as product bugs:
+
+- **`" is not clickable on the page…"` with a leading space** is an *empty
+  element name* — the step has no locators. That is a broken test, not a
+  missing button.
+- **A step that fails in ~188ms reporting "network idle"** is a `navigateToUrl`
+  with no URL — missing `event.href` / `requestList.url`.
+
+Environment and infrastructure classes do not get a code fix. Say so and route:
+`/cqa-environments` or `/cqa-suites-and-plans`.
+
+## Step 4 — Hypothesis
 
 1. Failing step (from B)
 2. Symptom — expected vs actual
-3. Evidence — pointers to A/B/C lines
-4. Hypothesis — one sentence
-5. Proposed fix — file path, function, plain-English change (1–3 lines)
+3. Evidence — pointers into A/B/C
+4. Class (Step 3) and hypothesis, one sentence
+5. Proposed fix — file path or step id, and the change in 1–3 lines
 6. Confidence — `high` / `medium` / `low`
 
-If `low`, stop and ask the user how to proceed.
+If `low`, stop and ask.
 
-## Step 4 — Confirmation gate
+## Step 5 — Confirmation gate
 
-Ask: *"Apply the fix to <file:line>? (y / edit / no)"*. Wait. If edited, re-confirm.
+*"Apply the fix to `<file:line>` / step `<id>`? (y / edit / no)"* Wait. If
+edited, re-confirm.
 
-## Step 5 — Execute fix (subagent) and verify
+## Step 6 — Apply and verify
 
-Dispatch ONE subagent: file path + change description, tools Read/Edit/Write, constraint: change only what the fix requires. Reports edits with file:line.
+**Broken test** — `manage_test_step(action="update", test_case_id=N, step_id=S,
+step={...})`. Use `dry_run=True` first to see the before/after field diff. Then
+`execute_test_case(test_case_id=N)`.
 
-Then `verify_bug_fix(test_case_id=<id>)` and poll `get_execution_status(test_case_id, number_of_executions=1)` until done. The poll returns **plain text wrapped in `{"result": "..."}`** like `"Execution in progress\nNumber of executions: 1"` or terminal status — match on substrings (`in progress` / `completed` / `failed`), do not assume JSON.
+**Product bug** — make the code change, then `verify_bug_fix(test_case_id=N)`.
 
-If a ticket was the source: `post_run_comment(...)` then post the body to the ticket.
+Either way: share the `live_url` with the user before your next tool call, then
+poll `get_execution_status(session_id=..., wait=True, timeout=60)`, posting a
+line each time it returns `timed_out`.
 
-## Step 6 — Loop or land
+Read `result` — `SUCCESS` / `FAILURE`. It is `null` while `is_completed` is
+false, and **a new result row appearing is not a pass.**
 
-- PASSED → Step 7.
-- FAILED, attempts < 3 → return to Step 2 with the new `result_id`. The fix is wrong/incomplete; never blame "not deployed yet".
-- FAILED, attempts == 3 → stop. Surface all attempts and ask the user.
+If the source was a ticket: `post_run_comment(...)` and post the body.
 
-## Step 7 — Report
+## Step 7 — Loop or land
 
-If a ticket was the source: `report_fix_to_ticket(...)` and post the body. End with: total attempts, final status, case URL `https://contextqatest.contextqa.com/td/cases/<id>/steps`, execution URL, files changed.
+- `SUCCESS` → Step 8.
+- `FAILURE`, attempts < 3 → back to Step 2 with the new `result_id`. The fix was
+  wrong or incomplete; do not blame "not deployed yet".
+- `FAILURE`, attempts == 3 → stop. Surface all three attempts and ask.
+
+A well-formed fix moves the failure **forward** — the old step goes green and
+the next one becomes the new failure. A failure that stays on the same step
+means the fix missed.
+
+## Step 8 — Report
+
+If a ticket was the source, `report_fix_to_ticket(...)` and post it. Close with:
+attempts, final verdict, the portal `url` from `get_test_case(id)` (never a
+hand-built link — they are tenant-specific), the execution link, and the files
+or steps changed.
 
 ## Rules
 
-- Every code change MUST be followed by `verify_bug_fix`.
-- Step 2 agents MUST run in parallel (single Agent message, ≥3 invocations).
-- Never call `report_fix_to_ticket` without a real `verify_bug_fix` result.
+- Every code change is followed by `verify_bug_fix`. No exceptions.
+- Never call `report_fix_to_ticket` without a real verification result.
 - Never pass a raw ticket URL into `bug_fix_from_ticket`.
-- Cap fix attempts at 3.
-- Tool responses are wrapped as `{"result": "..."}` — inspect for an embedded `next_step` field and follow it when present. `get_execution_status` is plain text; match on `in progress` / `completed` / `failed` substrings.
+- Never "fix" a case by deleting it and dropping in one AI step.
+- Cap at 3 attempts, then report honestly. Do not delete a failing case to tidy
+  the numbers.

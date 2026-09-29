@@ -1,79 +1,124 @@
 ---
 name: cqa-init
-description: Use FIRST in any ContextQA session — verifies the MCP is connected, authenticated, and the tenant is reachable. Detects the agent (Claude Code / Codex / Cursor / Antigravity / Claude Desktop), checks the right config file, runs a minimal probe, and reports a ready/not-ready verdict with the exact next step to fix it. Triggers on phrases like "set up contextqa", "is the contextqa mcp working", "/cqa-init", "verify my mcp", "first time with contextqa", or proactively when the user asks to use any other `/cqa-*` skill and connection state is unknown.
+description: Use FIRST in any ContextQA session — confirms the MCP is connected and authenticated, names the org, user and active workspace, and reports a ready/not-ready verdict with the exact next step. Detects the agent (Claude Code / Codex / Cursor / Antigravity / Claude Desktop) and points at the right config file when nothing is wired. Triggers on "set up contextqa", "is the contextqa mcp working", "verify my mcp", "first time with contextqa", "/cqa-init", or proactively when another `/cqa-*` skill is invoked and connection state is unknown.
 ---
 
 # ContextQA Init / Health Gate
 
-Run this once at the start of a ContextQA session, or any time tool calls start failing. Output is a single ready/not-ready verdict + the exact next move. Don't re-run if a successful verdict already exists this session.
+Run once at the start of a session, or whenever tool calls start failing. Output
+is one ready/not-ready verdict plus the next move. Don't re-run if a successful
+verdict already exists this session.
 
-## Step 0 — Identify the agent
+## Step 0 — Is the MCP already there?
 
-Detect which agent is running so the config guidance lands correctly. Check (cheapest first):
+If `list_contextqa_skills` or `get_current_user` is callable, the MCP is wired —
+skip to Step 2. Only go hunting through config files when the tools are absent.
 
-- **Claude Code** — env `CLAUDECODE=1` or `claude --version` works
-- **Codex CLI** — `codex --version` works or `~/.codex/` exists
-- **Cursor** — `~/.cursor/` and tools listed via Cursor's MCP UI
-- **Antigravity** — `~/.gemini/antigravity/` exists
-- **Claude Desktop** — `~/Library/Application Support/Claude/` exists (mac)
+## Step 1 — Not wired: point at the right config
 
-Record the detected agent. If multiple, ask once which the user is currently driving.
+Detect the agent (cheapest check first) and print the snippet it needs. The
+hosted server is **`https://mcp.contextqa.com/mcp`**; setup docs are at
+[`mcp.contextqa.com/docs`](https://mcp.contextqa.com/docs).
 
-## Step 1 — Verify MCP is configured
-
-For the detected agent, point at the right config file and check whether `contextqa` is listed:
-
-| Agent | Config |
+| Agent | Where it goes |
 |---|---|
-| Claude Code | `claude mcp list` (CLI) — look for `contextqa` |
-| Codex CLI | `~/.codex/mcp_config.json` — look for `mcpServers.contextqa` |
-| Cursor | `~/.cursor/mcp.json` — look for `mcpServers.contextqa` |
-| Antigravity | `~/.gemini/antigravity/mcp_config.json` — look for `mcpServers.contextqa` |
-| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` — look for `mcpServers.contextqa` (uses `mcp-remote` bridge) |
+| Claude Code | `claude mcp add --transport http contextqa https://mcp.contextqa.com/mcp` |
+| Codex CLI | `~/.codex/mcp_config.json` → `mcpServers.contextqa` |
+| Cursor | `~/.cursor/mcp.json` (or **Settings → Tools & MCP → New MCP Server**) |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` |
+| Claude Desktop | **Settings → Connectors → Add custom connector** |
 
-If missing, print the right snippet for that agent (hosted URL: `https://mcp.contextqa.com/mcp`) and instruct the user to add it + restart the agent. Then stop — re-run `/cqa-init` after restart.
+```json
+{ "mcpServers": { "contextqa": { "url": "https://mcp.contextqa.com/mcp" } } }
+```
 
-## Step 2 — Probe connection (read-only, no side effects)
+Then stop: the agent must restart before the tools appear. Re-run `/cqa-init`
+after the restart.
 
-Call ONE lightweight read tool to confirm the session is authenticated and the tenant is reachable: `mcp__contextqa__list_knowledge_bases` or `mcp__contextqa__get_test_plans(size=1)`.
+**Never edit the user's MCP config yourself.** Print the snippet and let them
+paste it.
 
-Interpret the response:
-- **Successful JSON-shaped response** → connection healthy. Continue to Step 3.
-- **Tool not found / not loaded** → MCP isn't wired into this agent session. Instruct: restart the agent after adding config, or run the agent's MCP refresh command.
-- **OAuth / auth error** → tell the user to complete browser login (don't close the redirect tab early — that's the most common failure per the README). Wait, then re-probe.
-- **`invalid session`** → expired session; instruct the user to sign in again from their MCP client.
-- **Network / HTTP 5xx** → hit `/health` on the configured endpoint; if down, surface to the user — there's nothing to fix locally.
+## Step 2 — Orient (this is the real check)
 
-## Step 3 — Tenant orientation (one read pass)
+```
+get_current_user          # org (tenant) + signed-in user + active workspace, in one call
+get_current_workspace
+```
 
-When healthy, run these in parallel via ONE Agent message and synthesize a one-paragraph orientation:
+`get_current_user` is the right probe: it is read-only, cheap, and it answers
+the question that actually matters — *which tenant and which workspace am I
+about to write into?* Never infer either from the API host or from data that
+came back.
 
-- `get_test_plans(size=5)` — confirms workspace + shows recent plans
-- `get_test_cases(size=5)` — confirms case access
-- `list_knowledge_bases` — shows available custom prompts
-- `get_environments(size=5)` — shows configured environments
+Interpret the failure modes:
 
-Output: tenant has `<N>` plans, `<M>` test cases visible, `<K>` knowledge bases, `<E>` environments. Highlight the most-recently-run plan with its `last_run.result`.
+| What you see | What to do |
+|---|---|
+| tool not found | the MCP isn't loaded in this session — add config, restart |
+| OAuth / auth error | complete the browser login and **keep the redirect tab open until it finishes** — closing it early is the most common failure |
+| `invalid session` | the session expired; sign in again from the MCP client |
+| workspace missing | `list_workspaces` → `switch_workspace(workspace_version_id=N)` |
+| network / 5xx | nothing local to fix; say so |
 
-## Step 4 — Ready verdict + next-skill suggestion
+**A missing session must fail loudly.** Never work around it — a fallback to
+service-account credentials would run as a different identity in a different
+workspace.
 
-Print a single block:
+## Step 3 — Read the live skill catalogue
 
-> ✓ ContextQA MCP ready — Agent: `<agent>` · Tenant: `<workspace_name>` · Cases: `<count>` · Plans: `<count>` · Last plan run: `<result>` (`<when>`).
+```
+list_contextqa_skills
+```
+
+The MCP serves its own skills and they are newer than anything installed
+locally. Report what it offers, and read `contextqa-platform` before doing
+anything substantive if the session does not already know the platform.
+
+## Step 4 — Tenant snapshot
+
+Run these together and synthesise one paragraph:
+
+```
+get_test_plans(size=5)        # each carries a last_run summary
+get_test_cases(size=5)
+list_environments()
+list_knowledge_bases
+```
+
+Note three things while you are here, because they all change what other skills
+should do:
+
+- **Is this a Ship org?** Ship (`ship.contextqa.com`) is the self-serve product:
+  its onboarding runs a mandatory website crawl, so a fresh Ship org **already
+  has generated test cases** before anyone authors one. Read them before
+  creating anything. Ship also enrols exactly one repository and excludes mobile
+  testing at launch.
+
+- **Does a default test plan exist?** A workspace version without one cannot
+  execute anything — `execute_test_case` answers `400` with an empty body. Say
+  so now rather than after fifteen cases have been authored into it.
+- **Is there a usable environment with a base URL?** If every case carries a
+  literal address instead, flag it and point at `/cqa-environments`.
+
+## Step 5 — Verdict
+
+> ✓ ContextQA ready — Org `<tenant>` · User `<name>` · Workspace `<name>` (`v<id>`)
+> · Cases `<n>` · Plans `<n>` (last run: `<result>`, `<when>`) · Environments `<n>`
 >
-> Next steps you can run now:
-> - **Find bugs in a deployed UI** → `/cqa-bug-hunter <url>`
-> - **Impact-analyze a ticket / PR** → `/cqa-impact <ref>`
-> - **Author tests from a source** → `/cqa-author <source>`
-> - **Debug a failing run** → `/cqa-debug <result_id>`
-> - **Run a regression** → `/cqa-regression <plan>`
+> Next: `/cqa-environments` · `/cqa-author` · `/cqa-suites-and-plans` ·
+> `/cqa-regression` · `/cqa-debug` · `/cqa-impact` · `/cqa-bug-hunter` ·
+> `/cqa-tunnel`
 
-If Step 2 or 3 surfaced a feature limitation (e.g. an earlier `/cqa-author` returned a `/requirements/upload` 404), include a line: *"⚠ Tenant gating detected: the requirements pipeline (swagger / figma / video / excel / requirements / code-diff) is disabled. `/cqa-author` will fall back to manual creation for those sources."*
+Add a warning line for anything found in Step 4 — no default plan, no
+environment, or a tenant where the `/requirements/upload` pipeline is disabled
+(which gates `/cqa-author`'s swagger / figma / video / excel / requirements /
+code-diff paths and makes it fall back to manual authoring).
 
 ## Rules
 
-- This skill is the **only** one that talks about agent config files. Other `cqa-*` skills assume the MCP is already wired and call tools directly.
-- Don't re-probe if a successful verdict was issued this session — `/cqa-init` is a one-shot check, not a heartbeat.
-- Never write to the user's MCP config files automatically — print the snippet, let the user paste it. Config edits are user-confirmable, not auto-applied.
-- Step 2 must use a read-only tool. Don't use `execute_test_case`, `execute_test_plan`, or any `create_*` / `bug_fix_from_ticket` tool as a probe — those mutate or consume time.
-- If the user explicitly skips init (`"skip init"` / `"already done"`), respect that and don't gate other skills.
+- This is the **only** skill that talks about agent config files. The others
+  assume the MCP is wired and call tools directly.
+- The probe must be read-only. Never use `execute_test_case`, `execute_test_plan`,
+  any `create_*`, or `bug_fix_from_ticket` as a health check.
+- One-shot, not a heartbeat. Don't re-probe after a successful verdict.
+- If the user says "skip init", respect it and don't gate anything.

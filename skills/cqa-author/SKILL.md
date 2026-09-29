@@ -1,81 +1,164 @@
 ---
 name: cqa-author
-description: Use when the goal is to author new ContextQA test cases from a source — a Linear/Jira/GitHub ticket, a Swagger/OpenAPI spec, a Figma file, a video, an Excel sheet, an n8n workflow, a code diff, or a free-text requirements doc. Investigate the source, plan the suite shape, then create cases in parallel via subagents. Triggers on phrases like "create tests from this ticket", "generate tests from swagger/figma/video", "/cqa-author <source>", "build a test suite for X".
+description: Use when the goal is to author new ContextQA test cases from a source — a Linear/Jira/GitHub ticket, a Swagger/OpenAPI spec, a Figma file, a video, an Excel sheet, an n8n workflow, a code diff, or free-text requirements. Fetch the source, pick the generation path, review the plan at a gate, then create and harden the cases. Triggers on "create tests from this ticket", "generate tests from swagger/figma/video", "build a test suite for X", "/cqa-author <source>".
 ---
 
 # ContextQA Test Authoring
 
-Pick the right path for the source, fetch before generating, review before creating manual extras.
+Fetch before you generate. Gate before you create. Harden before you call it
+done — a generated case is a draft, not a deliverable.
 
 ## Step 0 — Identify
 
 Capture (ask once if missing):
-- `source_type` — `linear` | `jira` | `github_issue` | `swagger` | `figma` | `video` | `excel` | `n8n` | `code_diff` | `requirements_text`
+
+- `source_type` — `linear` | `jira` | `github_issue` | `swagger` | `figma` |
+  `video` | `excel` | `n8n` | `code_diff` | `requirements_text`
 - `source_ref` — URL, file path, ticket id, branch, or raw text
-- `app_url` — required for browser/mobile cases (skip for `swagger` / `API_TESTCASE`)
+- `app_url` — required for browser/mobile cases (not for `swagger` /
+  `API_TESTCASE`)
 
-## Step 1 — Investigate (subagent if external)
+Then orient: `get_current_user` names the org and workspace you are about to
+write into. **A case's workspace is baked into its record and cannot be moved
+later** — author in the workspace that will run it.
 
-If the source needs fetching (Linear/Jira/GH/GitLab ticket, remote file): dispatch ONE subagent. Order of preference: Linear MCP / Jira MCP / GitLab MCP → `gh issue view` / `glab issue view` → `curl`. Return raw content — never just a URL.
+Before generating anything, check what exists: `query_contextqa(query=<one-line
+summary>)` finds semantically adjacent cases. Duplicating coverage is worse than
+adding none.
 
-If no fetcher is available, ask once: *"I couldn't fetch <ref>. Install the matching MCP for best fidelity, OR paste the body and I'll continue."* Plain-text input is supported — for tickets it routes through `reproduce_from_ticket`; for free-form requirements it uses the two-phase `generate_tests_from_requirements` → `start_requirements_generation` flow.
+## Step 1 — Fetch the source
 
-Skip this step if the source is already in-hand text, a local file path, or a URL the matching MCP tool accepts directly.
+If it needs fetching (a ticket, a remote file), do that first and pass the
+**content**, never a URL. Order of preference: the matching MCP (Linear / Jira /
+GitLab) → `gh issue view` / `gh pr view` / `glab issue view` → `curl`.
+
+If nothing can fetch it, ask once: *"I couldn't fetch `<ref>`. Connect the
+matching MCP for best fidelity, or paste the body and I'll continue."* **Plain
+pasted text is a first-class input** — no tracker integration required.
+
+Skip this step when the source is already in-hand text, a local path, or a URL
+the generation tool accepts directly.
 
 ## Step 2 — Pick the generation path
 
-| Source | Tool | Notes |
-|---|---|---|
-| `linear` | `generate_tests_from_linear_ticket` | Pass fetched title/description/repro/expected/actual |
-| `jira` / `github_issue` | `reproduce_from_ticket` (or `generate_tests_from_requirements`) | Treat body as ticket text |
-| `swagger` | `generate_tests_from_swagger(file_path_or_url=...)` | API tests |
-| `figma` | `generate_tests_from_figma(figma_url=...)` | |
-| `video` | `generate_tests_from_video(video_url=...)` | |
-| `excel` | `generate_tests_from_excel(file_path, sheet_name)` | |
-| `n8n` | `generate_contextqa_tests_from_n8n(file_path_or_url, app_url)` | |
-| `code_diff` | `generate_tests_from_code_change(diff_text, app_url, name_prefix)` | |
-| `requirements_text` | `generate_tests_from_requirements` → answer questions → `start_requirements_generation` | Always run both phases |
+| Source | Tool |
+|---|---|
+| `linear` | `generate_tests_from_linear_ticket(ticket_id, title, description, app_url, steps_to_reproduce, expected_behavior, actual_behavior)` |
+| `jira` / `github_issue` | `reproduce_from_ticket(ticket_text, url, name)` — or `bug_fix_from_ticket` for the full reproduce→fix→verify loop |
+| `swagger` | `generate_tests_from_swagger(file_path_or_url)` |
+| `figma` | `generate_tests_from_figma(figma_url)` |
+| `video` | `generate_tests_from_video(video_url)` |
+| `excel` | `generate_tests_from_excel(file_path, sheet_name)` |
+| `n8n` | `generate_contextqa_tests_from_n8n(file_path_or_url, app_url)` — read `get_contextqa_skill(name="n8n-testing")` first |
+| `code_diff` | `generate_tests_from_code_change(diff_text, app_url, name_prefix)` |
+| `requirements_text` | `generate_tests_from_requirements(requirements_text)` → answer the returned questions → `start_requirements_generation(session_id, questions_json_str)` |
 
-If multiple sources are given, run sequentially — the requirements pipeline shares session state.
+Run generators **sequentially** — the requirements pipeline shares session
+state.
 
-**Tenant feature gating:** `swagger`, `figma`, `video`, `excel`, `requirements_text`, **and `code_diff`** all use the `/requirements/upload` backend. On tenants where this isn't enabled they fail with HTTP 404 (`/requirements/upload`) or "Failed to fetch latest requirement ID: no response". When that happens, fall back to manual case authoring in Step 4 — extract scenarios from the source yourself and create cases via `create_test_case` + `create_complex_test_step`. Tell the user the fallback is happening; don't fail silently. (`generate_tests_from_linear_ticket`, `reproduce_from_ticket`, and `generate_contextqa_tests_from_n8n` use different backends and are not affected by this gating.)
+**`requirements_text` MUST go through both phases.** Phase 1 returns a
+`session_id` and questions; stopping there creates nothing.
 
-**Public-URL constraint:** `generate_tests_from_swagger` / `_from_figma` / `_from_video` fetch the URL server-side. Private GitHub raw URLs return 404 — host the file publicly first, or pass a local file path if the server supports it.
+**Tenant feature gating.** `swagger`, `figma`, `video`, `excel`,
+`requirements_text` **and `code_diff`** all ride the `/requirements/upload`
+backend. Where it isn't enabled they fail with a 404 on `/requirements/upload`
+or "Failed to fetch latest requirement ID". When that happens, **say so**, then
+fall back to authoring by hand (Step 4). `generate_tests_from_linear_ticket`,
+`reproduce_from_ticket` and the n8n path use different backends and are not
+affected.
 
-## Step 3 — Plan and confirm
+**Public-URL constraint.** The swagger / figma / video tools fetch the URL
+server-side. A private GitHub raw URL returns 404 — host it publicly or pass a
+local path.
 
-After generation returns (or before, for slow paths), print:
+## Step 3 — Plan and confirm (gate)
+
+Print, and wait:
 
 1. Source summary (1–3 lines)
 2. Proposed cases — name + `Happy` / `Error` / `Edge` / `Branch` / `API` / `Visual`
 3. Coverage gaps the generator missed
-4. `app_url` and `test_type` per case (`BROWSER` / `MOBILE` / `API_TESTCASE`)
+4. `test_type` (`BROWSER` / `MOBILE` / `API_TESTCASE`) and target environment
+5. Where they will live — folder, tags, `module_name`, suite
 
-Ask: *"Approve [N] generated cases? Add the [K] manual gaps? (y / edit / no)"*. Wait.
+*"Approve [N] generated cases? Add the [K] manual gaps? (y / edit / no)"*
 
-## Step 4 — Execute manual augmentations (parallel subagents, ≤5)
+**Decide the environment here, not later.** Every case binds one, and if you
+don't choose, the workspace default is bound for you. Cases that will run
+against more than one deployment need `*|base_url|` rather than a literal
+address — see `/cqa-environments`.
 
-One subagent per gap. Brief:
-- Case name, scenario, `test_type`, `app_url`, ordered steps
-- Tools: `create_test_case` (case + first natural-text step), `create_complex_test_step` (REST/loop/conditional), `update_test_case_step` (additional natural-text steps)
-- For API tests, pass `api_url`, `api_method`, payload fields directly to `create_test_case`
-- Reports: `test_case_id`, step count, case URL
+## Step 4 — Author the gaps
 
-For fixes to generator output: same pattern with `get_test_case_steps` + `update_test_case_step`.
+Per gap:
 
-## Step 5 — Optional suite
+```
+manage_test_case(action="create", name=..., test_type="BROWSER",
+                 tags=[...], module_name=..., folder_id=...)
+manage_test_step(action="create", test_case_id=N, step={...}, dry_run=True)
+```
 
-If asked: `create_test_suite(name, test_case_ids, test_type)`, then `get_available_devices` + `create_test_plan` for a runnable plan.
+- `manage_test_case(action="create")` makes a **bare** case; steps come from
+  `manage_test_step`. `create_test_case(task_description=...)` instead makes one
+  **AI step** — useful as a bootstrap, not as the finished article.
+- For API cases, pass `api_steps` to `create_test_case` with `url`, `method`,
+  `payload`, `expected_status`, `variable_name` — and chain responses with
+  `${result.body.id}`.
+- A repeated prefix (log in, seed data) belongs in a **step group**
+  (`is_step_group=True`) or a **prerequisite**
+  (`manage_test_case(action="set_prerequisites")`), not copy-pasted into every
+  case.
 
-## Step 6 — Final report
+Writing steps that actually run is its own job — read `/cqa-locators` and
+`get_contextqa_skill(name="cqa-authoring-tests")` before hand-authoring. The
+short version: a typed step needs either an `element_id` or
+`event.pwLocator` + `event.selector`, or it saves cleanly and times out at run
+time.
 
-Per case: id, name, step count, `https://contextqatest.contextqa.com/td/cases/<id>/steps`. Include suite id if created. End with a next-step suggestion: `execute_test_plan(<id>)` or `/cqa-regression`.
+Fixing generator output is the same pattern: `manage_test_step(action="list")`
+to see what is there, `action="update"` to change it. **Never delete a case and
+replace it with one AI step.**
+
+## Step 5 — Harden: run at least one
+
+A case that has never run is a guess. Execute one representative case, share its
+`live_url` immediately, then poll
+`get_execution_status(session_id=..., wait=True, timeout=60)`.
+
+Read `result` — the executor's own verdict. On `FAILURE`,
+`get_execution_step_details(result_id)` names the failing step, and
+`failure_reason` says what broke. Fix, re-run, advance one step per fix. Cap at
+~3 attempts, then report the real reason rather than thrashing.
+
+If the generator produced a wall of consecutive AI steps,
+`manage_test_step(action="coalesce_ai_steps", test_case_id=N)` merges each run
+into one (defaults to `dry_run=True` — review, then apply). N separate AI steps
+means N independent agent invocations, each blind to the ones around it.
+
+## Step 6 — Make them runnable
+
+```
+create_test_suite(name=..., test_case_ids=[...], test_type="BROWSER")
+get_available_devices(device_type="browser")
+create_test_plan(name=..., devices=[{"browser": "chrome", "suite_ids": [S]}],
+                 environment_id=E, notify_emails="qa@acme.com")
+```
+
+Suites group; **plans run**. See `/cqa-suites-and-plans`.
+
+## Step 7 — Report
+
+Per case: id, name, step count, and the portal `url` returned by
+`get_test_case` — **do not construct portal links by hand**, they are
+tenant-specific. Include the suite and plan ids if created, plus one next step:
+`execute_test_plan(<id>)` or `/cqa-regression`.
 
 ## Rules
 
-- Linear/Jira/GH tickets: always fetch the body before any `generate_tests_from_*`.
-- `requirements_text` MUST go through both phases.
-- No browser/mobile case without `app_url`.
-- Step 3 confirmation gate runs even if generation succeeded.
-- Don't parallelize generator calls — only investigate-fetch and manual augment.
-- All ContextQA tool responses are wrapped as `{"result": "..."}`. Tools like `reproduce_from_ticket` return an embedded `next_step` field — follow it when present.
+- Always fetch a ticket's body before any `generate_tests_from_*`; never pass a
+  raw URL as the description.
+- `requirements_text` goes through **both** phases.
+- No browser/mobile case without an `app_url`.
+- The Step 3 gate runs even when generation succeeded.
+- Don't parallelise generator calls — only the fetch and the manual authoring.
+- Some tools return an embedded `next_step` field. Follow it when present.
