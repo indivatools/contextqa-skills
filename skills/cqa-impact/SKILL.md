@@ -1,83 +1,149 @@
 ---
 name: cqa-impact
-description: Use when given a ticket (Linear/Jira/GitHub issue), a PR URL or number, or a branch name, and the goal is to find which existing ContextQA test cases the change affects and which new tests are needed — then update or create those cases via subagents. Triggers on phrases like "impact analysis", "what tests does this PR affect", "which ContextQA tests should I rerun", "/cqa-impact <ref>".
+description: Use when given a ticket, a PR, or a branch and the goal is to find which existing ContextQA test cases the change affects and which coverage is missing — then update, create or rerun those cases. Combines the platform's own analysis with the model's own pass over case steps and the caller graph, and can drive the real PR-impact pipeline when a repository is enrolled. Triggers on "impact analysis", "what tests does this PR affect", "which ContextQA tests should I rerun", "/cqa-impact <ref>".
 ---
 
 # ContextQA Impact Analysis
 
-Run every phase in order. Never mutate a test case before the Step 4 gate.
+Run the phases in order. **Never mutate a test case before the Step 5 gate.**
+
+There are two different mechanisms, and picking the wrong one wastes the
+session:
+
+| | `analyze_impact` | `manage_pr_impact` |
+|---|---|---|
+| What it is | an ad-hoc semantic query over the case repository | the real PR pipeline |
+| Needs a repo enrolled | no | yes |
+| Stores anything | no | yes — one analysis per `(repo_id, pr_number)` |
+| Runs anything | no | yes, per `testRunTiming` |
+| Good for | "what would this change break?" | a PR that should get a check and a comment |
+
+Default to `analyze_impact`. Reach for `manage_pr_impact` when the repository is
+already enrolled and the user wants the verdict on the PR itself — see
+`/cqa-integrations`.
 
 ## Step 0 — Resolve the input
 
-**Description text is REQUIRED. Diff is optional enrichment.** A ticket-driven impact analysis (Jira/Linear, no code yet) is fully supported. A PR/branch-driven analysis is *more precise* but the description is still the load-bearing input.
+**Description text is required; a diff is optional enrichment.** A ticket-driven
+analysis with no code yet is fully supported. A PR or branch makes it more
+precise, but the description carries the weight.
 
-User gives ONE or more of: ticket URL/id (Linear/Jira/GitHub/GitLab), PR URL/number, branch name, or a pasted description. If only a URL was given, fetch the body in Step 1. If only a description in plain text was given, skip Agent B in Step 1.
+Accept any of: ticket URL/id, PR URL/number, branch name, or pasted text.
 
-## Step 1 — Investigate (parallel subagents in ONE Agent message)
+## Step 1 — Investigate (parallel, one message)
 
-Run these agents in parallel — skip any whose input is N/A.
+- **A — fetch the description (required output).** Matching MCP → `gh issue
+  view` / `gh pr view` / `glab issue view` → `curl`. Return title, description,
+  repro/expected/actual, labels, linked PRs. If nothing can fetch it, ask once
+  and accept a paste. **Never pass a raw URL forward as the description.**
+- **B — extract the diff (optional).** Only if a PR or branch exists. `gh pr
+  diff <n>` plus `gh pr view <n> --json headRefName,baseRefName`; or `git diff
+  <base>...<branch>`. Truncate huge files to hunks. Skip cleanly when there is
+  no code reference.
+- **C — adjacency.** `query_contextqa(query=<one-line summary>)`. Return the top
+  10 cases with id, name, last status and why they look relevant.
 
-- **Agent A — Description fetch (REQUIRED OUTPUT).** Try in order: Linear MCP / Jira MCP / GitLab MCP → `gh issue view <n>` / `gh pr view <n>` / `glab issue view <n>` → `curl` against tracker REST. Return: title, description, repro/expected/actual, labels, linked PRs. If none worked, ask once: *"Couldn't auto-fetch <ref>. Install the matching MCP (e.g. `mcp install linear`) for best fidelity, OR paste the body here."* Plain pasted text is a first-class input — never pass a raw URL forward.
-- **Agent B — Diff extract (OPTIONAL).** Only run if a PR/branch reference exists or a linked PR was found in Agent A. PR: `gh pr diff <n>` + `gh pr view <n> --json headRefName,baseRefName`. Branch: `git diff <base>...<branch>` (default base `main`). GitLab: GitLab MCP equivalents. Return unified diff (truncate huge files to hunks) + changed file list. Skip cleanly if no code reference exists.
-- **Agent C — Adjacency.** Take a 1-line summary of the change and call `query_contextqa(query=<summary>)`. Return top 10 cases (id, name, last status, why relevant).
+## Step 2 — Platform analysis
 
-## Step 2 — Impact analysis
+```
+analyze_impact(title=..., description=..., diff=..., source="github"|"jira"|"linear"|"mcp")
+```
 
-Call `analyze_impact(title, description, diff, source)` with `source` = `linear` | `jira` | `github` | `mcp` (use `mcp` when only a branch was given). It takes 1–2 minutes.
+Takes 1–2 minutes. It returns **individual test cases only** — never suites or
+plans — with a risk level, affected features/workflows/entities, and a per-case
+action: `MUST_UPDATE` (steps need changing), `MUST_RERUN` (execute to verify no
+regression), `SHOULD_RERUN` (related, run if there is time).
 
-Response is **markdown wrapped in `{"result": "..."}`**, with sections: `## Impact Analysis` (risk + summary), `### Affected Areas` (Features / Workflows / Entities), `### Test Case Impact (N affected)` (counts: `Must Update: N`, `Must Rerun: N`, `Should Rerun: N`). Per-case detail only appears when N > 0. Parse the markdown — do not assume JSON.
+The response is markdown. Parse it; don't assume JSON.
 
-If all counts are 0 (sparse tenant or unrelated change), **Affected Areas is still the useful signal** — pivot Step 3 to lead with new test gaps based on those areas.
+**If every count is 0, do not conclude "no work".** On a sparse tenant that is
+the normal answer. The *Affected Areas* section is still the useful signal —
+pivot Step 4 to lead with coverage gaps in those areas.
 
-Cross-reference with Agent C's results — flag adjacency hits `analyze_impact` missed as `MAYBE_RELATED`.
+Cross-reference with C and flag anything adjacency found that the analysis
+missed as `MAYBE_RELATED`.
 
-## Step 2.5 — Model-driven cross-check (parallel subagents in ONE Agent message)
+## Step 3 — The model's own pass (parallel, one message)
 
-`analyze_impact` is the MCP's first pass. The model runs its own pass on top — this is what makes Claude+ContextQA worth more than a thin wrapper.
+This is what makes an agent plus ContextQA worth more than a thin wrapper.
 
-- **Agent X — Case-step matcher.** Pull `get_test_cases(size=50)` (paginate if total>50). Rank cases by description match against the change. For the top 10–15, fetch `get_test_case_steps(id)` and look for steps whose natural-language `action` references paths, selectors, copy, endpoint names, or identifiers that appear in the change description (and diff if present). Return ranked candidates with the matching step quote(s) and case id.
-- **Agent Y — Caller graph (only if diff present).** Take changed functions/components from the diff, grep the local repo for callers, build a 2-hop dependency view, list user-facing flows that transitively depend on the change. Tools: Read, Grep. Return entries shaped as: `<flow name>` → `<entrypoint file:line>` → `<reason>`.
+- **X — case-step matcher.** `get_test_cases(size=50)` (paginate on total).
+  Rank by description match against the change, then for the top 10–15 call
+  `get_test_case(id)` and read the steps: look for step text referencing paths,
+  selectors, copy, endpoint names or identifiers that appear in the change.
+  Faster shortcut when you know the string:
+  `search_test_steps("element:*Checkout*,")` returns matching steps **and** the
+  deduplicated `test_case_ids`. Never repeat a key in that grammar — it ANDs and
+  silently matches nothing; use `@` for in-list.
+- **Y — caller graph (only with a diff).** Take the changed functions and
+  components, grep for callers, build a 2-hop view, and list the user-facing
+  flows that transitively depend on the change. Return
+  `<flow>` → `<entrypoint file:line>` → `<reason>`.
 
-**Merge sources for Step 3:**
-- In `analyze_impact` ∩ Agent X → **HIGH MUST_UPDATE** (cite both)
-- `analyze_impact` only → **MCP-only** (label so the user knows confidence is one-sided)
-- Agent X only → **MODEL-FOUND MAYBE_AFFECTED** — surface explicitly with the step-quote evidence
-- Agent Y entries → feed Step 3.5 as forward-looking gaps, not existing-case impact
+Merge:
 
-## Step 3 — Impact report (inline)
+| Source | Label |
+|---|---|
+| in `analyze_impact` **and** X | `HIGH MUST_UPDATE` — cite both |
+| `analyze_impact` only | `MCP-only` — confidence is one-sided, say so |
+| X only | `MODEL-FOUND MAYBE_AFFECTED` — surface with the step quote as evidence |
+| Y | forward-looking coverage gaps, not existing-case impact |
 
-1. **Change summary** (2–3 lines)
-2. **Affected features / workflows / entities** (verbatim from `analyze_impact`)
-3. **Existing cases** — group by source so the user sees confidence:
-   - `HIGH MUST_UPDATE` (in MCP and model) — id, name, step quote, exact change
-   - `MCP-only` MUST_UPDATE / MUST_RERUN / SHOULD_RERUN
-   - `MODEL-FOUND MAYBE_AFFECTED` (Agent X only, with step quote)
-   - `MAYBE_RELATED` (adjacency from Agent C)
-4. **New test gaps (Step 3.5)** — for each diff hunk *or each affected workflow when diff is absent*, the model proposes 2–3 specific scenarios that no existing case covers. Each gap: 1 line + `BROWSER` / `MOBILE` / `API_TESTCASE`. Include scenarios derived from Agent Y (caller graph) when present.
-5. **Plan of action** — numbered units: `UPDATE <id> [source]`, `CREATE "<name>" [gap-source]`, `RERUN <id>`. Each unit cites which source(s) flagged it.
+## Step 4 — Report
 
-## Step 4 — Confirmation gate
+1. Change summary (2–3 lines)
+2. Affected features / workflows / entities, verbatim
+3. Existing cases, grouped by the labels above, each with the step quote and the
+   exact change needed
+4. **Coverage gaps** — for each hunk, or each affected workflow when there is no
+   diff, 2–3 specific scenarios nothing covers. One line each plus
+   `BROWSER` / `MOBILE` / `API_TESTCASE`
+5. **Plan of action** — numbered: `UPDATE <id> [source]`,
+   `CREATE "<name>" [source]`, `RERUN <id>`
 
-Print the report and ask: *"Proceed with [N] updates, [M] creates, [K] reruns? (y / partial / no)"*. Wait for explicit go.
+Flag one thing while you are here: any affected case whose steps contain a
+**literal URL**. Those pass against the old deployment after a change — the
+platform's own preflight ranks `FIXED_URL` as more misleading than a missing
+variable. Route them to `/cqa-environments`.
 
-## Step 5 — Execute (parallel subagents, batches of ≤5)
+## Step 5 — Confirmation gate
 
-One subagent per approved unit, self-contained brief:
+*"Proceed with [N] updates, [M] creates, [K] reruns? (y / partial / no)"* Wait
+for an explicit go.
 
-- **UPDATE** — case id + exact change. Tools: `get_test_case_steps`, `update_test_case_step`, `delete_test_case_step`, `create_complex_test_step`. Reports: step ids changed.
-- **CREATE** — name, scenario, `app_url`, `test_type`. Tools: `create_test_case`, `create_complex_test_step`, `update_test_case_step`. Reports: new `test_case_id` + step count.
-- **RERUN** — case id. Tools: `execute_test_case` then `get_execution_status`. Reports: result_id, status, execution_url.
+## Step 6 — Execute (parallel, batches of ≤5)
 
-Surface any subagent failure to the user — never retry silently.
+One subagent per approved unit, self-contained:
 
-## Step 6 — Final summary
+- **UPDATE** — case id and the exact change. Tools:
+  `manage_test_step(action="list")`, `manage_test_step(action="update")`,
+  `manage_test_step(action="delete")`. Use `dry_run=True` first on anything
+  structural. Reports the step ids changed.
+- **CREATE** — name, scenario, `test_type`, environment. Tools:
+  `manage_test_case(action="create")` then `manage_test_step(action="create")`.
+  Read `/cqa-locators` first. Reports the new `test_case_id` and step count.
+- **RERUN** — `execute_test_case(test_case_id=N)`, share `live_url`, then
+  `get_execution_status(session_id=..., wait=True, timeout=60)`. Reports
+  `result_id`, the verdict, and the execution link.
 
-Per case: `https://contextqatest.contextqa.com/td/cases/<id>/steps`, rerun pass/fail, plus a one-paragraph note the user can paste back to the ticket/PR.
+Surface any subagent failure. Never retry silently.
+
+## Step 7 — Summary
+
+Per case: the portal `url` from `get_test_case` (never a hand-built link), the
+rerun verdict, and one paragraph the user can paste back onto the ticket or PR.
+
+If the repository is enrolled and the user wants this on the PR itself, hand off
+to `manage_pr_impact` — and check `baseBranchFilter` first, because it defaults
+to the literal `"main"` and silently drops every PR in an organisation that
+merges into `develop`.
 
 ## Rules
 
-- Never call a mutating tool before Step 4.
-- Step 1 agents MUST run in parallel (single Agent message, multiple invocations).
-- All ContextQA tool responses are wrapped as `{"result": "<json-or-markdown-or-text>"}`. Inspect tool output for an embedded `next_step` field — when present, prefer it over hard-coded next moves.
-- If `analyze_impact` reports 0 affected cases, do NOT skip to "no work" — use Affected Areas to propose new gaps.
-- Never pass a raw ticket URL as `description` to `analyze_impact`.
+- No mutating tool before the Step 5 gate.
+- Steps 1 and 3 run their agents in parallel, one message each.
+- Never pass a raw ticket URL as `description`.
+- `analyze_impact` returning 0 affected cases is not "no work" — use Affected
+  Areas for gaps.
+- Label every finding with its source. One-sided confidence should look
+  one-sided.

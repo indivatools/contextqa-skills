@@ -1,101 +1,171 @@
 ---
 name: cqa-bug-hunter
-description: Use when the goal is to find as many bugs as possible in a deployed UI by generating adversarial / negative / edge-case test cases at scale. Inputs are a target URL (and optional credentials). Recon the surface via ContextQA itself, brainstorm adversarial scenarios per surface element, generate dozens of test cases reusing a shared login step group, execute and triage. Triggers on phrases like "find bugs in this app", "hunt for bugs at <url>", "build adversarial coverage", "stress-test this deployed UI", "/cqa-bug-hunter <url>".
+description: Use when the goal is to find as many bugs as possible in a deployed UI by generating adversarial, negative and edge-case ContextQA tests at scale. Recons the surface, brainstorms hypotheses per element, generates cases against a shared login fixture, executes, triages and reports by severity. Built for breadth — most real bugs hide in negative paths and concurrency, not happy paths. Triggers on "find bugs in this app", "hunt for bugs at <url>", "build adversarial coverage", "stress-test this deployed UI", "/cqa-bug-hunter <url>".
 ---
 
 # ContextQA Bug Hunter
 
-Recon the deployed UI, generate adversarial coverage, run, triage. Built for breadth — most real bugs hide in negative paths and concurrency, not happy paths.
+Recon the surface, generate adversarial coverage, run it, triage what fails.
 
-## Step 0 — Resolve target
+**This skill deliberately uses AI-agent steps.** Everywhere else in ContextQA
+typed steps win, because you maintain them. Here the cases are disposable
+probes: written once, run once, kept only if they find something. If a
+hypothesis *does* find a real bug, convert that one case to typed steps
+(`/cqa-locators`) so it becomes a regression test. The rest can be deleted.
+
+## Step 0 — Resolve the target and the cost
 
 Capture (ask once if missing):
-- `app_url` — the live deployed UI under test
-- `credentials` — username/password for any authed area (optional but unlocks most of the surface)
-- `budget` — soft cap on cases to generate (default 50; offer 20 / 50 / 100 if not provided)
-- `existing_step_group_id` — optional id of a pre-existing login step group; if absent we'll create one in Step 2
 
-## Step 1 — Recon via ContextQA (no external browser)
+- `app_url` — the deployed UI under test
+- `credentials` — unlocks most of the surface (see the gate below)
+- `budget` — soft cap on cases (default 50; offer 20 / 50 / 100)
+- `existing_step_group_id` — an existing login fixture, if there is one
 
-Don't assume any external browse tool. Use ContextQA itself: create one short scout test case whose AI-driven task is to map the surface, then execute it and read the result.
+**This is the expensive skill.** Every case is an AI-driven run against a live
+app. Before generating, say roughly how many runs this will be and confirm.
 
-1. `create_test_case(test_type="BROWSER", name="bug-hunter scout: <host>", task_description="Open <app_url>. If a login form appears, log in with username '<u>' / password '<p>'. Then explore the main navigation: list every distinct page title you can reach, every visible button label, every form field (with its placeholder/label), and every API call observed in the network. Output a structured JSON with: pages[], buttons[], forms[], endpoints[]. Stop after 60 seconds of exploration.")`
-2. `execute_test_case(test_case_id=<scout_id>)` → poll with `get_execution_status` (cross-check `get_test_case(id).last_run` for ground truth — `get_execution_status` can be stale).
-3. When complete, fetch `get_execution_step_details(result_id)` — the AI step's `action` summary contains the recon JSON.
-4. Also call `get_ai_insights()` — surfaces PostHog-derived flows the tenant has data on; merge with the scout's output.
-5. Also call `query_contextqa(query="<host> coverage")` to identify cases already exercising this surface. Skip duplicating their scenarios.
+**Confirm the target is not production**, or that the user accepts adversarial
+traffic against it. The hypothesis matrix below includes double-submits,
+concurrency bursts and auth-boundary probes. Those create real records and
+occasionally real charges. Get that agreed before Step 4, not after.
 
-Return a **surface map**: pages × buttons × forms × endpoints × auth states. Cap at the top 30 surface elements by visit frequency / interaction density.
+### The credential gate
 
-## Step 2 — Build the shared step group (login fixture)
+For the authed surface the app password usually has to reach the automation:
 
-If `existing_step_group_id` is set, skip. Otherwise:
+1. **Warn** that it will be used to log in.
+2. **Get explicit permission.**
+3. **Confirm it is not production** and carries no billing consequence.
+4. Store it as a `password`-typed environment parameter — never in step text,
+   never in a file, never in the transcript. Filter `password` / `token` /
+   `authorization` / `bearer` / `cookie` out of anything you print.
+5. **Always offer the alternative:** the user signs in themselves and you take
+   over the session.
 
-`create_test_case(test_type="BROWSER", name="bug-hunter fixture: login as <user>", task_description="Open <app_url>. Log in as '<u>' / '<p>'. Verify the post-login landing page loaded successfully.")`. Note the returned id; keep it as `login_fixture_id`. Every adversarial case in Step 4 uses `pre_requisite_ids=[login_fixture_id]` so we don't redo login 50–100 times.
+## Step 1 — Recon
 
-## Step 3 — Adversarial hypothesis matrix
+Don't assume an external browser. Use ContextQA itself.
 
-For each surface element, the model brainstorms hypotheses across these categories. Aim for breadth — not all categories apply to every element.
+1. `create_test_case(test_type="BROWSER", name="bug-hunter scout: <host>",
+   environment_id=<env>, task_description="Open *|base_url|. If a login form
+   appears, log in. Then explore the main navigation: list every distinct page
+   title you can reach, every visible button label, every form field with its
+   label or placeholder, and every API call observed. Output JSON with pages[],
+   buttons[], forms[], endpoints[]. Stop after 60 seconds.")`
+2. `execute_test_case(test_case_id=<scout>)` — share `live_url`, then
+   `get_execution_status(session_id=..., wait=True, timeout=60)`.
+3. `get_execution_step_details(result_id)` — the AI step's summary carries the
+   recon JSON.
+4. `get_ai_insights()` — surfaces the flows the tenant actually has usage data
+   on. Weight those higher; a bug on a page nobody visits is worth less.
+5. `query_contextqa(query="<host> coverage")` — skip anything already covered.
+
+Produce a **surface map**: pages × buttons × forms × endpoints × auth states.
+Cap at the 30 highest-traffic elements.
+
+If your agent has a real browser tool, use it instead for recon — it is faster
+and free. The ContextQA scout is the fallback that always works.
+
+## Step 2 — Build the login fixture once
+
+Skip if `existing_step_group_id` is set. Otherwise create a **step group**:
+
+```
+manage_test_case(action="create", name="bug-hunter fixture: login", is_step_group=True)
+```
+
+Author its steps (see `/cqa-locators` — this one is worth typing properly,
+because every probe depends on it), then attach it to each generated case with
+`manage_test_case(action="set_prerequisites", id=<case>, prerequisite_ids=[<fixture>])`.
+
+**Never re-author login 50 times.** A flaky fixture turns into 50 false
+positives.
+
+## Step 3 — The hypothesis matrix
+
+For each surface element, brainstorm across these. Not every category applies to
+every element — aim for breadth, not completeness.
 
 | Category | Example hypothesis |
 |---|---|
-| **Idempotency** | Double-click "Submit" rapidly — was one record created or two? |
-| **Concurrency** | Click "Add to cart" 10 times within 200ms — does the cart show 1 or 10? Are 10 API requests issued? |
-| **Input validation** | Submit an empty title / null / whitespace-only / 10k chars / Unicode emoji / `<script>alert(1)</script>` / SQL `' OR 1=1 --` |
-| **Boundary values** | Number field with 0, -1, MAX_INT, 0.0001, scientific notation |
-| **Auth boundaries** | Hit an authed page after token expires, in incognito, with another user's id in the URL |
-| **State corruption** | Open the form in two tabs, submit one, then submit the other; back-button after a destructive action |
-| **Error UX** | Trigger every error the form can produce — is the message specific, or generic/missing? |
-| **Navigation** | Refresh during an in-flight save; close the tab mid-upload; deep-link to a subroute without prerequisites |
-| **Permissions** | As a non-admin user, attempt admin-only endpoints / pages |
-| **Data integrity** | Create → edit → navigate away → return — does the change persist? Did pagination drop rows? |
-| **Accessibility / UX** | Tab through the form: does focus land sanely? Submit without a mouse — does the keyboard path work? |
+| **Idempotency** | double-click Submit rapidly — one record or two? |
+| **Concurrency** | click Add to cart 10× in 200ms — does the cart show 1 or 10? |
+| **Input validation** | empty / whitespace-only / 10k chars / emoji / `<script>alert(1)</script>` / `' OR 1=1 --` |
+| **Boundary values** | 0, -1, MAX_INT, 0.0001, scientific notation |
+| **Auth boundaries** | an authed page after the token expires; another user's id in the URL |
+| **State corruption** | two tabs, submit both; back-button after a destructive action |
+| **Error UX** | trigger every error the form can produce — is the message specific, or generic? |
+| **Navigation** | refresh mid-save; close the tab mid-upload; deep-link past a prerequisite |
+| **Permissions** | as a non-admin, reach admin-only pages and endpoints |
+| **Data integrity** | create → edit → navigate away → return: did it persist? did pagination drop rows? |
+| **Accessibility** | tab through the form — does focus land sanely? does the keyboard path work? |
 
-Each hypothesis is one sentence — the AI step's `task_description` reads like: *"On <page>, attempt <adversarial action> and verify <expected safe behavior>. The test should FAIL if the bug is present."*
+Each hypothesis is one sentence, written so the case **fails when the bug is
+present**: *"On `<page>`, attempt `<adversarial action>` and verify `<expected
+safe behavior>`."*
 
-Cap at `budget`. Show the user the matrix (or a sample if huge) and ask: *"Generate <N> cases? (y / edit selection / subset)"*. Wait for go.
+Cap at `budget`. Show the matrix (or a sample) and ask: *"Generate `<N>` cases?
+(y / edit / subset)"* Wait.
 
-## Step 4 — Author + execute (parallel subagents, batches ≤5)
+## Step 4 — Author and execute (batches of ≤5)
 
-Dispatch one subagent per case in batches of 5. Each subagent:
-- Calls `create_test_case(test_type="BROWSER", name="bug-hunter: <category> — <surface>", task_description=<hypothesis>, pre_requisite_ids=[login_fixture_id])`
-- Calls `execute_test_case(test_case_id=<new_id>)`
-- Polls until terminal state (cross-check `get_test_case(id).last_run`)
-- Reports `(test_case_id, result_id, verdict, failing_step_quote_if_any)`
+One subagent per case, five at a time:
 
-Throttle to keep tenant load reasonable. If a case errors out at creation, skip and continue — never block the batch.
+- `create_test_case(test_type="BROWSER", name="bug-hunter: <category> — <surface>",
+  task_description=<hypothesis>, environment_id=<env>, pre_requisite_ids=[<fixture>],
+  tags=["bug-hunter"])`
+- `execute_test_case(test_case_id=<new>)`, then poll to a terminal state
+- Report `(test_case_id, result_id, verdict, failing_step_quote)`
 
-## Step 5 — Triage findings
+Tag every generated case so the workspace can be cleaned up afterwards. Throttle
+to keep tenant load reasonable. If one errors at creation, skip it — never block
+the batch.
 
-Group results:
-- **PASSED** — no bug found by that hypothesis (record briefly)
-- **FAILED** — candidate bugs
+## Step 5 — Triage
 
-For each failed result, dispatch ONE read-only triage subagent: tools `investigate_failure`, `get_execution_step_details`, `get_network_logs`, `get_console_logs`, `get_trace_url`. Required output (~120 words):
-- `verdict` — `confirmed-bug` / `test-flaw` / `flaky` / `inconclusive`
+`SUCCESS` means the hypothesis found nothing. `FAILURE` is a **candidate**, not
+a bug — an adversarial AI step fails for bad reasons as often as good ones.
+
+One read-only triage subagent per failure: `investigate_failure`,
+`get_execution_step_details`, `get_network_logs`, `get_console_logs`,
+`get_trace_url`. Required output (~120 words):
+
+- `verdict` — `confirmed-bug` / `test-flaw` / `environment` / `flaky` / `inconclusive`
 - 1–2 sentence root cause
-- Severity hint — `critical` / `high` / `medium` / `low` based on: data loss / auth bypass / silent failures > visible errors > cosmetic
-- Reproduction one-liner
+- severity — `critical` / `high` / `medium` / `low`, weighted: data loss and
+  auth bypass first, then silent failures, then visible errors, then cosmetic
+- a one-line reproduction
 
-Re-run any `inconclusive` cases once via `execute_test_case`. If still inconclusive, classify as `flaky`.
+Re-run `inconclusive` cases once. Still inconclusive → `flaky`.
 
-## Step 6 — Aggregate report
+Two things that are **never** bugs in the product: a step failing with
+`" is not clickable"` (a leading space means the step had no element) and a
+navigate step failing in ~188ms on "network idle" (the step had no URL). Both
+are test flaws.
 
-Deduplicate confirmed bugs by symptom (group by failing element / error message). Output:
+## Step 6 — Report
 
-1. **Summary** — N hypotheses tested, N cases passed, N candidates failed, N confirmed bugs by severity.
-2. **Confirmed bugs** — sorted by severity then category. Each: title, severity, surface element, reproduction, evidence URLs (screenshot, network, console, trace), `result_id`, `https://contextqatest.contextqa.com/td/cases/<id>/steps`.
-3. **Test-flaws** — false positives the user should know about (bad hypothesis or stale fixture).
-4. **Coverage residue** — surface elements not yet hypothesised against (suggest a next run).
+Deduplicate confirmed bugs by symptom — group by failing element and error
+message, since one bug typically trips several hypotheses.
 
-If the user asked to file tickets: dispatch one subagent per confirmed bug to draft a body (Jira / Linear / GitHub). Do NOT post tickets without explicit per-bug approval.
+1. **Summary** — hypotheses tested, passed, candidates, confirmed by severity
+2. **Confirmed bugs**, sorted by severity: title, surface, reproduction,
+   evidence links (network, console, trace, video), `result_id`, and the portal
+   `url` from `get_test_case` — never a hand-built link
+3. **Test flaws** — false positives the user should know about
+4. **Coverage residue** — surface elements not yet probed, as a next run
+5. **Cleanup** — the `bug-hunter` tag, and which cases are worth keeping
+
+If asked to file tickets, draft the bodies. **Do not post without explicit
+per-bug approval.**
 
 ## Rules
 
-- All ContextQA tool responses are wrapped as `{"result": "..."}`; cross-check `get_execution_status` against `get_test_case.last_run`.
-- Triage subagents are READ-ONLY — they must not create cases, edit, or rerun.
-- Reuse the login fixture via `pre_requisite_ids` — never re-author the login flow per case.
-- Don't depend on external browser tools; ContextQA's own AI execution is the recon mechanism.
-- Cap parallel authoring/execution at 5 subagents to respect tenant rate limits.
-- Always honor the `budget` — don't quietly exceed the user's cap.
-- If `query_contextqa` shows a hypothesis is already covered by an existing case, skip it.
+- Triage subagents are read-only.
+- Reuse the login fixture via prerequisites; never re-author it per case.
+- Honour `budget`. Don't quietly exceed the cap.
+- Skip any hypothesis `query_contextqa` shows is already covered.
+- Cap parallel authoring and execution at 5.
+- Confirm the target and the cost before Step 4. This skill spends real money
+  and writes real records.

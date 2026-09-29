@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "contextqa": {
+      "type": "http",
+      "url": "https://mcp.contextqa.com/mcp"
+    }
+  }
+}

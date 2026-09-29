@@ -1,77 +1,123 @@
 ---
 name: cqa-regression
-description: Use when the goal is to run a ContextQA test plan as a regression suite, wait for results, and triage failures across multiple subagents in parallel. Inputs are a test plan id, a plan name to look up, or a freeform "run the regression suite" intent. Triggers on phrases like "run the regression", "execute test plan X", "run my smoke suite and triage", "kick off nightly tests", "/cqa-regression <plan>".
+description: Use when the goal is to run a ContextQA test plan as a regression, wait for it, and triage the failures in parallel. Inputs are a test plan id, a plan name to look up, or a freeform "run the regression" intent. Clusters failures by shared cause, dispatches read-only triage, and hands confirmed bugs to /cqa-debug. Triggers on "run the regression", "execute test plan X", "run my smoke suite and triage", "kick off nightly tests", "/cqa-regression <plan>".
 ---
 
 # ContextQA Regression Run & Triage
 
-Launch a plan, wait for it, triage failures via parallel subagents. Don't debug failures inline — that's the subagents' job.
+Launch a plan, watch it, triage the failures. **Don't debug inline** — the value
+of this skill is separating twelve failures into two causes, not fixing one.
 
 ## Step 0 — Resolve the plan
 
-ONE of:
-- `test_plan_id` → use directly
-- `plan_query` → `get_test_plans(query=<plan_query>)`, pick best match; if multiple are plausible, list and ask once
-- nothing → `get_test_plans()`, offer top 5
+One of:
 
-Optional: `knowledge_id`.
+- a `test_plan_id` — use it
+- a name — `get_test_plans(query=<name>)`, pick the best match; list and ask if
+  several are plausible
+- nothing — `get_test_plans(size=10)` and offer the top few
 
-`get_test_plans` returns each plan with a `last_run` summary (`result`, `status`, `duration_ms`, `total/passed/failed`) — use it to spot recently-passing plans vs. stale ones when picking.
+`get_test_plans` returns a `last_run` summary per plan (`result`, `status`,
+`duration_ms`, `total`/`passed`/`failed`). Use it to tell a maintained plan from
+an abandoned one before running something expensive.
 
-## Step 1 — Confirm and kick off
+Check the plan's `environment_id` before launching, and say which deployment
+this run will hit. A regression against the wrong environment produces a page of
+real-looking failures that mean nothing.
 
-A regression run consumes shared infrastructure (browsers, devices, AI step interpretation) — get explicit user consent before kickoff, even if a plan id was supplied. Print the resolved plan summary (id, name, last_run result + start_time) and ask: *"Kick off plan <id> '<name>'? (y / no)"*. Wait.
+## Step 1 — Confirm, then launch
 
-Then `execute_test_plan(test_plan_id=<id>, knowledge_id=<id-or-omit>)`. Record `execution_id`.
+A regression consumes shared infrastructure — browsers, devices, AI step
+interpretation, credits. **Get explicit consent even when a plan id was
+supplied.** Print the plan (id, name, devices, environment, last run) and ask:
+*"Kick off plan `<id>` '`<name>`' against `<environment>`? (y / no)"*
 
-If re-running a previous execution: `rerun_test_plan(execution_id=<prev>)`.
+```
+execute_test_plan(test_plan_id=N, knowledge_id=<optional>, environment_id=<optional override>)
+```
 
-## Step 2 — Poll
+Record the `execution_id`. To repeat a previous run:
+`rerun_test_plan(execution_id=<prev>)`.
 
-Loop on `get_test_plan_execution_status(execution_id)` — start at 30s, back off to 60s after 5 minutes. Print one progress line per poll: `running 12/30 cases — 4 passed, 1 failed`. Stop when status is `COMPLETED`, `STOPPED`, or `FAILED`.
+## Step 2 — Poll out loud
 
-Never go silent for >60s during this step.
+Loop `get_test_plan_execution_status(execution_id)` — every 30s, backing off to
+60s after five minutes. Print one line per poll:
+`running 12/30 cases — 4 passed, 1 failed`. Stop on `COMPLETED`, `STOPPED` or
+`FAILED`.
 
-## Step 3 — Collect failures
+**Never go silent for more than a minute** while a team is watching.
 
-From the final status, extract failed `(result_id, test_case_id, case_name, failing_step_preview)`. If zero failures → Step 6.
+## Step 3 — Collect, and check it actually ran
+
+Extract the failed `(result_id, test_case_id, case_name, failing_step_preview)`.
+
+Before reporting anything: **a run that `COMPLETED` with 0 passed and 0 failed
+executed nothing.** That is not a green regression — it is a plan with no
+runnable cases, or an infrastructure failure. `FAILED_TO_START` likewise is
+infrastructure, not a red build. Say which one it is.
+
+Zero *real* failures → Step 6.
 
 ## Step 4 — Cluster
 
-Group failures by:
-- Same failing-step text or selector
-- Same network host / endpoint
-- Same console error signature
-- Otherwise one cluster per case
+Group by, in order:
 
-Cap at 5 clusters. Leftovers go in `MISC`.
+- identical failing-step text or selector
+- same network host or endpoint
+- same console error signature
+- otherwise, one cluster per case
 
-## Step 5 — Triage in parallel (subagents, ONE Agent message)
+Cap at 5 clusters; the rest go in `MISC`.
 
-One subagent per cluster. Brief:
-- Cluster name, the `result_id`s, the failing-step preview
-- Tools (READ-ONLY): `investigate_failure`, `get_execution_step_details`, `get_step_children_details`, `get_network_logs`, `get_console_logs`, `get_trace_url`, `fix_and_apply`
-- Output (~150 words): cluster verdict (`shared root cause` / `independent issues`), 1–3 sentence root-cause hypothesis, the file/component most likely at fault, recommended next action — `code-fix` / `update-test` / `flaky-rerun` / `unknown`
+Before dispatching, sanity-check for a single environmental cause. If every
+failure is on the first step, or every one is a timeout, the answer is usually
+one thing — a missing environment variable, an expired credential, the app under
+test being down — not five independent bugs. Check
+`list_environment_variables(environment_id=<plan env>)` first; it is one call
+and it saves five subagents.
 
-Triage subagents MUST NOT mutate code, edit cases, or rerun the plan. Hand off to `/cqa-debug` for actual fixes.
+## Step 5 — Triage in parallel (read-only)
 
-## Step 6 — Final report
+One subagent per cluster, in a single message. Brief each with the cluster name,
+its `result_id`s, and the failing-step preview.
 
-1. **Summary** — N total, P passed, F failed, duration, plan id, `execution_id`, link `https://contextqatest.contextqa.com/td/runs/<execution_id>`
-2. **Per-cluster verdicts** — root cause → action → cases (id, name, result_id, execution_url)
-3. **MISC** — one line each
-4. **Suggested next commands**:
+Tools, all **read-only**: `investigate_failure`, `get_execution_step_details`,
+`get_step_children_details`, `get_network_logs`, `get_console_logs`,
+`get_trace_url`, `fix_and_apply`.
+
+Required output (~150 words): cluster verdict (`shared root cause` /
+`independent issues`), a 1–3 sentence root cause, the file or component most
+likely at fault, and a recommended action — `code-fix` / `update-test` /
+`environment` / `flaky-rerun` / `unknown`.
+
+**Triage subagents must not mutate code, edit cases or rerun the plan.** Fixes
+go through `/cqa-debug`.
+
+## Step 6 — Report
+
+1. **Summary** — total, passed, failed, duration, plan id, `execution_id`,
+   environment, and the portal links returned by the tools. Don't construct
+   portal URLs by hand; they are tenant-specific.
+2. **Per-cluster verdicts** — root cause → action → cases (id, name,
+   `result_id`).
+3. **MISC** — one line each.
+4. **Next commands**:
    - `code-fix` → `/cqa-debug result_id=<id>`
+   - `update-test` → `/cqa-locators`, or `/cqa-impact` with the change that
+     caused it
+   - `environment` → `/cqa-environments`
    - `flaky-rerun` → `rerun_test_plan(execution_id=<this>)`
-   - `update-test` → `/cqa-impact` with the PR/ticket that introduced the change
 
-If the user asked to file tickets: dispatch one subagent per cluster to draft a Jira/Linear/GH issue body. Do NOT post tickets without explicit approval.
+If asked to file tickets, draft the bodies — one subagent per cluster — and
+**do not post without explicit approval.**
 
 ## Rules
 
-- Triage subagents are READ-ONLY.
-- Always print poll progress; no silent waits >60s.
-- Don't auto-rerun on first failure — flakiness is a verdict, not a default.
-- Stop at triage. Hand off to `/cqa-debug` for fixes.
-- Cap at 5 parallel triage subagents; rest go in `MISC`.
-- All ContextQA tool responses are wrapped as `{"result": "..."}`; status polls may be plain text — match on `completed` / `failed` substrings.
+- Triage subagents are read-only.
+- Always print poll progress; no silent waits over 60s.
+- Don't auto-rerun on first failure. Flakiness is a verdict you reach, not a
+  default you assume.
+- Stop at triage. `/cqa-debug` does fixes.
+- Cap at 5 parallel triage subagents; the rest go in `MISC`.
+- Report the run honestly, including "this executed nothing".
