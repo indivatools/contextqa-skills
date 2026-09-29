@@ -5,6 +5,11 @@ description: Use when the app under test is not reachable from the internet — 
 
 # ContextQA Tunnel — testing what is only running locally
 
+**The tunnel exists so a locally running application can be tested in
+ContextQA.** That is the whole purpose: code on a laptop, a build agent or a
+machine inside a corporate network gets exercised by real ContextQA test runs,
+against the build that exists right now, without deploying it anywhere first.
+
 ContextQA's runners live in the cloud. Your app often does not. The tunnel
 closes that gap: a small agent on the machine **dials out** and holds a
 WireGuard tunnel from your side, so `http://localhost:3000` becomes a real
