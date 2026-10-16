@@ -39,7 +39,7 @@ get_contextqa_skill(name="contextqa-platform")
 |---|---|
 | touch anything, if you don't know the platform | `contextqa-platform` — tenancy, scoping, object graph, token grammar, the real execution path |
 | write or edit a step | `cqa-authoring-tests` — the wire format that runs, locator sources, the execute-and-fix loop |
-| move a case between workspaces or tenants | `cqa-copy-test-case` |
+| move or clone a case between workspaces or tenants | `cqa-copy-test-case` — read with one `export_test_case_bundle` call |
 | go from a ticket to a reproduced, fixed bug | `cqa-bug-fix` |
 | turn cases into a Playwright project | `cqa-export-playwright` |
 | drive the PR-impact pipeline | `cqa-pr-impact` |
@@ -150,6 +150,16 @@ at from CI. See `cqa-suites-and-plans`.
 cross-cutting selection (`smoke`, `release-1`), `module_name` for the product
 area. `move_to_folder` and `add_tags` are cheap; a flat list of 400 cases is
 not.
+
+**Batch, don't loop.** Every tool call is a round-trip through the model, so
+the number of calls — not the platform — decides how long multi-item work takes.
+To read cases together with everything they depend on (prerequisites, step
+groups, test data, environments, elements, variables), make one
+`export_test_case_bundle` call instead of fetching each item; it returns one
+bundle and a summary of what it could and could not read. To write steps, send
+a case's steps in one bulk call, then read the step count back. A clone that
+that takes twenty minutes one call at a time should take a minute or two. See
+`cqa-copy-test-case` in the live catalogue.
 
 **Close the loop with the integrations.** Connect GitHub/GitLab, Slack, Linear
 or Jira so impact analysis runs on real pull requests and results land where the
