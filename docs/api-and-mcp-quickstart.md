@@ -2,6 +2,7 @@
 
 Use REST from CI/CD and workflow tools for specific operations. Use hosted MCP from a compatible assistant to discover and call the tools available to your workspace.
 
+- [Public Postman workspace and onboarding guide](https://www.postman.com/deep-2dbadbf7-2980737/workspace/contextqa-api-mcp)
 - [Create a ContextQA account](https://ship.contextqa.com/)
 - [Hosted MCP setup and tool documentation](https://mcp.contextqa.com/docs)
 - [Agent skills and installation](../README.md)
