@@ -31,6 +31,10 @@ completes.
 
 Run `/cqa-init` once to confirm everything is wired.
 
+## REST and workflow examples
+
+For REST authentication, read-only Postman examples, explicitly approved plan execution and n8n setup, see the [API and MCP quickstart](docs/api-and-mcp-quickstart.md). REST tokens and MCP OAuth are separate flows.
+
 ## What's in the box
 
 **Start here.**

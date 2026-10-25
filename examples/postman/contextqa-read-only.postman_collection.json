@@ -1,0 +1,123 @@
+{
+  "info": {
+    "_postman_id": "a514c345-3394-420a-b47a-0bc6964b02a7",
+    "name": "ContextQA REST \u2014 Read-only quickstart",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Requires a ContextQA account and a scoped REST API token from Settings \u2192 API tokens. Signup: https://ship.contextqa.com/ . Store the token privately, never in published values. MCP OAuth is separate: https://mcp.contextqa.com/docs . Limit: 120 requests per minute per token. No live REST validation is claimed for this package.\n\nThese requests do not start runs. For a run summary, status must be STATUS_COMPLETED before interpreting its result."
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{contextqa_api_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://server.contextqa.com",
+      "type": "string"
+    },
+    {
+      "key": "contextqa_api_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "List test plans",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/test_plans?page=0&size=5",
+        "description": "Requires permission `TEST_PLANS_READ`.\n\nRequired permission: TEST_PLANS_READ"
+      },
+      "response": []
+    },
+    {
+      "name": "List test cases",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/test_cases?page=0&size=5",
+        "description": "Requires permission `TEST_CASES_READ`.\n\nRequired permission: TEST_CASES_READ"
+      },
+      "response": []
+    },
+    {
+      "name": "List test suites",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/test_suites?page=0&size=5",
+        "description": "Requires permission `TEST_SUITES_READ`.\n\nRequired permission: TEST_SUITES_READ"
+      },
+      "response": []
+    },
+    {
+      "name": "List test plan results",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/test_plan_results?page=0&size=5",
+        "description": "Requires permission `TEST_PLAN_RESULTS_READ`.\n\nRequired permission: TEST_PLAN_RESULTS_READ"
+      },
+      "response": []
+    },
+    {
+      "name": "Read existing run summary",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/test_plan_results/{{runId}}/results",
+        "description": "Poll until `status` is `STATUS_COMPLETED`, then read `result`.\n\nRequires permission `TEST_PLAN_RESULTS_READ`.\n\nRequired permission: TEST_PLAN_RESULTS_READ"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!/^\\d+$/.test(String(pm.variables.get('runId') || ''))) { pm.execution.skipRequest(); throw new Error('Set an existing numeric runId.'); }"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
