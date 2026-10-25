@@ -1,0 +1,71 @@
+{
+  "info": {
+    "_postman_id": "75000d2c-327d-4ca5-823e-6579bd12e592",
+    "name": "ContextQA REST \u2014 Explicit single-run action",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Requires a ContextQA account and a scoped REST API token from Settings \u2192 API tokens. Signup: https://ship.contextqa.com/ . Store the token privately, never in published values. MCP OAuth is separate: https://mcp.contextqa.com/docs . Limit: 120 requests per minute per token. No live REST validation is claimed for this package.\n\nThis GET endpoint starts a billed non-idempotent run. Do not run through a collection runner or schedule. No automatic retry. After an ambiguous timeout, locate the existing run before another attempt. Copy the returned id to the read-only collection runId; do not treat pending as passed."
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{contextqa_api_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://server.contextqa.com",
+      "type": "string"
+    },
+    {
+      "key": "contextqa_api_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "planId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "execution_approval",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Start one approved plan run",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/test_plans/{{approvedPlanId}}/execution",
+        "description": "Starts a billed run and returns its id. **Not idempotent**: do not retry after the server may have received the request, or a second run starts. There is no API to stop a run.\n\nRequires permission `TEST_PLAN_EXECUTE`.\n\nRequired permission: TEST_PLAN_EXECUTE"
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const approval = pm.collectionVariables.get('execution_approval');",
+              "if (approval !== 'RUN_ONCE' || !/^\\d+$/.test(String(pm.collectionVariables.get('planId') || ''))) { pm.execution.skipRequest(); throw new Error('Set collection planId and execution_approval=RUN_ONCE for one billed run.'); }",
+              "pm.collectionVariables.set('execution_approval', '');",
+              "pm.variables.set('approvedPlanId', pm.collectionVariables.get('planId'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
