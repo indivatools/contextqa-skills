@@ -219,6 +219,8 @@ this through one describer, so a tool error is already a sentence.
 | Run a plan and triage the failures | `cqa-regression` |
 | Turn a bug ticket into a running reproduction | `cqa-bug-repro` |
 | Diagnose and fix one failing case or bug | `cqa-debug` |
+| Take one bug ticket to a merged, verified fix | `cqa-ship-bug` |
+| Get a FIXED / NOT_FIXED verdict on a ticket after a fix | `cqa-verify-fix` |
 | Work out what a PR or ticket breaks | `cqa-impact` |
 | Hunt for bugs in a deployed UI at breadth | `cqa-bug-hunter` |
 | Connect GitHub/GitLab/Slack/Linear/Jira | `cqa-integrations` |

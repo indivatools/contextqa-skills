@@ -41,10 +41,43 @@ hands back a structured bundle.
   guide). Prefer `bug_fix_from_ticket` unless you only want the case.
 
 Then: `verify_bug_fix(test_case_id=N)` after a fix,
-`post_run_comment(...)` per attempt, `report_fix_to_ticket(...)` at the end.
+`post_run_comment(...)` per attempt, `report_fix_to_ticket(...)` at the end —
+each returns a `comment_body`; post it with your own Linear or Jira tool, the
+MCP posts nothing.
 **Never call `report_fix_to_ticket` without a real verification result**, and if
 verification still fails, call `investigate_failure(result_id)` for the actual
 evidence before concluding anything.
+
+## On demand — the platform run that reports on the ticket
+
+`bug_fix_from_ticket` runs inside your session. To start the same reproduction
+the automatic triggers start — the one that comments on the ticket, keeps a
+regression test and re-validates later — trigger it by ticket:
+
+```
+manage_bug_reproduction(action="trigger", ticket_id="CON-123", source="linear", confirm=True)
+manage_bug_reproduction(action="list_by_ticket", ticket_id="CON-123")   # poll
+```
+
+- **One run costs credits and posts on the ticket.** Being asked to reproduce
+  this ticket is consent for one run; ask before another.
+- **Check first.** If `list_by_ticket` already has a finished row and nobody
+  asked for a fresh run, show it. A row still `IN_PROGRESS` → wait for it,
+  never start a second.
+- **`trigger` returns no id.** Poll `list_by_ticket` about once a minute; an
+  empty list for the first minutes is queued, not failed. Runs take roughly
+  3–12 minutes. Stop at 20 and report what you saw.
+- **Empty for a ticket that did run?** Rows are matched on the ticket reference
+  exactly. Older runs may be stored under the tracker's internal issue id (the
+  Linear issue UUID, the Jira numeric id) instead of the key. If you can read
+  the ticket with a tracker tool, retry with that id before concluding there is
+  no run.
+- **Report the verdict as written** — `REPRODUCED`, `NOT_REPRODUCED`,
+  `NEEDS_INFO`, `INTERNAL_ERROR` — with the failed step, expected vs actual in
+  the run's own words, the evidence link and the regression `test_case_id`.
+- **`NEEDS_INFO`** → `action="submit_info"`, `analysis_id` = the row's
+  `uploadRequirementId`, `details` = the missing facts **from the user**, never
+  invented. It comments on the ticket and runs again (credits).
 
 ## Automatic — how a ticket fires a run
 
