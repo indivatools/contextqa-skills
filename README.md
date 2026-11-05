@@ -1,6 +1,6 @@
 # ContextQA Agent Skills
 
-Thirteen agent skills that drive the [ContextQA](https://contextqa.com) MCP from
+Fifteen agent skills that drive the [ContextQA](https://contextqa.com) MCP from
 any compatible coding agent — Claude Code, Codex CLI, Cursor, Antigravity,
 Claude Desktop, and the rest.
 
@@ -58,6 +58,8 @@ Run `/cqa-init` once to confirm everything is wired.
 | **`cqa-debug`** | One failing case or bug ticket: gather telemetry in parallel, separate a product bug from a broken test, fix, verify, report. Capped at 3 attempts. |
 | **`cqa-impact`** | A ticket, PR or branch: which existing cases are affected, which coverage is missing. Layers the model's own case-step matcher and caller graph on top of `analyze_impact`, and owns the enrolled-repo PR pipeline end to end. |
 | **`cqa-bug-hunter`** | Find as many bugs as possible in a deployed UI — recon, adversarial hypothesis matrix, generate at scale, execute, triage by severity. Built for breadth. |
+| **`cqa-ship-bug`** | One bug ticket end to end: reproduce, fix, verify on the ticket (before the PR when the app runs from your working copy), open the PR, run the tests it affects, then stop for a person to merge. |
+| **`cqa-verify-fix`** | After a fix is live: move the ticket into a re-validation status and report ContextQA's FIXED / NOT_FIXED verdict. |
 
 **Connecting things.**
 
