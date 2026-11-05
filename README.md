@@ -20,9 +20,18 @@ forms:
 claude plugin marketplace add indivatools/contextqa-skills
 claude plugin install contextqa@contextqa
 
+# Codex — skills + the hosted MCP server, then install from /plugins
+codex plugin marketplace add indivatools/contextqa-skills
+
 # Any other agent — skills via the open Agent Skills format (skills.sh)
 npx skills add indivatools/contextqa-skills
 ```
+
+Cursor and VS Code (Copilot) install the same folder as an
+[Agent Plugin](https://agent-plugins.org): in Cursor, a team admin imports this
+repo under **Dashboard → Plugins & MCPs → Team Marketplaces**; in VS Code, turn on
+`chat.plugins.enabled` and add this repo under **Chat: Open Customizations →
+Plugins → Configure Marketplaces**.
 
 Then point your MCP client at **`https://mcp.contextqa.com/mcp`** if the plugin
 didn't do it for you ([per-client setup](https://mcp.contextqa.com/docs)). The
