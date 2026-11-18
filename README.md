@@ -136,3 +136,7 @@ misconfigured.
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+## Coding agent integrations
+
+See [Devin, Cursor, Factory/Droid and MCP Registry setup](docs/agent-integrations.md). Marketplace approval and account authorization are separate from package installation.
