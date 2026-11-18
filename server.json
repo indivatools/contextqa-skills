@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.indivatools/contextqa",
+  "title": "ContextQA",
+  "description": "Create, run, and debug software tests with ContextQA using OAuth.",
+  "version": "2.0.0",
+  "repository": {
+    "url": "https://github.com/indivatools/contextqa-skills",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.contextqa.com/mcp"
+    }
+  ]
+}
